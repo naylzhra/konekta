@@ -1,0 +1,90 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgis/postgis:16-3.4
+    environment:
+      POSTGRES_USER: konekta
+      POSTGRES_PASSWORD: konekta
+      POSTGRES_DB: konekta
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ../db/migrations:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U konekta"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # TODO(bandung-map-data): temporary stand-in for a real OSRM instance
+  # until the Bandung .osm.pbf extract is processed into .osrm files.
+  # See services/osrm-mock/app/main.py.
+  osrm-mock:
+    build:
+      context: ../../services/osrm-mock
+    ports:
+      - "5001:8000"
+
+  gateway:
+    build:
+      context: ../../services/gateway
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql://konekta:konekta@postgres:5432/konekta
+      REDIS_URL: redis://redis:6379/0
+      OSRM_BASE_URL: http://osrm-mock:8000
+    depends_on:
+      - postgres
+      - redis
+
+  pooling-service:
+    build:
+      context: ../../services/pooling-service
+    ports:
+      - "8001:8000"
+    environment:
+      DATABASE_URL: postgresql://konekta:konekta@postgres:5432/konekta
+      REDIS_URL: redis://redis:6379/0
+      OSRM_BASE_URL: http://osrm-mock:8000
+    depends_on:
+      - postgres
+      - redis
+      - osrm-mock
+
+  stop-optimization-service:
+    build:
+      context: ../../services/stop-optimization-service
+    ports:
+      - "8002:8000"
+    environment:
+      DATABASE_URL: postgresql://konekta:konekta@postgres:5432/konekta
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      - postgres
+      - redis
+
+  forecasting-service:
+    build:
+      context: ../../services/forecasting-service
+    ports:
+      - "8003:8000"
+    environment:
+      DATABASE_URL: postgresql://konekta:konekta@postgres:5432/konekta
+    depends_on:
+      - postgres
+
+volumes:
+  postgres_data:

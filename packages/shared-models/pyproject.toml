@@ -1,0 +1,10 @@
+[project]
+name = "konekta-shared-models"
+version = "0.1.0"
+description = "Shared Pydantic models for KONEKTA Python services."
+requires-python = ">=3.11"
+dependencies = ["pydantic>=2.9,<3"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"

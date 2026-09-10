@@ -1,0 +1,4 @@
+-- 001_seed.sql
+-- Placeholder seed data.
+--
+-- TODO: seed sample Bandung demand points / stops once the schema exists.
