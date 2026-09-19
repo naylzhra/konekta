@@ -1,14 +1,10 @@
-"""
-WebSocket connection manager stub.
+# TODO: wire this into pooling-service events once real-time feeder location and virtual-stop broadcasts are defined.
 
-TODO: wire this into pooling-service / stop-optimization-service events
-once real-time feeder location and virtual-stop broadcasts are defined.
-For now it just accepts connections and echoes messages back, so the
-mobile app and dashboard have something to connect against.
-"""
 from typing import Dict
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect, status
+
+from app.auth.session_store import get_session, refresh_session_ttl
 
 router = APIRouter()
 
@@ -40,13 +36,18 @@ manager = ConnectionManager()
 
 
 @router.websocket("/ws/{client_id}")
-async def websocket_endpoint(websocket: WebSocket, client_id: str) -> None:
+async def websocket_endpoint(websocket: WebSocket, client_id: str, token: str = Query(...)) -> None:
+    session = await get_session(token)
+    if session is None:
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        return
+    await refresh_session_ttl(token)
+
     await manager.connect(client_id, websocket)
     try:
         while True:
             data = await websocket.receive_text()
-            # TODO: route incoming messages (location pings, ride requests,
-            # virtual-stop subscriptions, etc.) instead of echoing.
+            # TODO: route incoming messages (location pings, ride requests, virtual-stop subscriptions, etc.) instead of echoing.
             await manager.send_personal_message(client_id, f"echo: {data}")
     except WebSocketDisconnect:
         manager.disconnect(client_id)
