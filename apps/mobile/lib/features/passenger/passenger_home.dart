@@ -2,10 +2,10 @@ import 'package:flutter/material.dart';
 
 import '../../core/api/api_client.dart';
 
-// TODO: replace with real passenger flow (request ride, view virtual stop,
-// track assigned feeder) once those APIs exist.
 class PassengerHome extends StatefulWidget {
-  const PassengerHome({super.key});
+  const PassengerHome({super.key, required this.token});
+
+  final String token;
 
   @override
   State<PassengerHome> createState() => _PassengerHomeState();

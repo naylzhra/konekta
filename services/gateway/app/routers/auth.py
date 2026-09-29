@@ -1,15 +1,3 @@
-"""
-Auth endpoints: register/login/logout, and admin suspend/reactivate.
-
-Credentials are phone number + password. No OTP verification of phone
-ownership -- that's a real feature (SMS provider integration) intentionally
-left out of this mockup stage; phone_number here is just a login
-identifier, not a verified-owned number.
-
-TODO: no admin provisioning flow exists -- /register only allows
-passenger/driver. Create admin accounts by inserting into the users table
-directly for now.
-"""
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -25,7 +13,7 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 class RegisterRequest(BaseModel):
     phone_number: str
     password: str
-    role: Literal["passenger", "driver"] # TODO: add governor
+    role: Literal["passenger", "driver", "government"]
 
 
 class LoginRequest(BaseModel):
