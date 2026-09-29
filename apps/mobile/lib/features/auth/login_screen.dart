@@ -1,11 +1,17 @@
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../core/api/api_client.dart';
-import '../driver/driver_home.dart';
-import '../government/government_home.dart';
-import '../passenger/passenger_home.dart';
+import '../../core/theme/konekta_theme.dart';
+import '../../shared_widgets/konekta_logo.dart';
+import 'auth_validators.dart';
+import 'register_screen.dart';
+import 'role_router.dart';
 
-
+/// Phone number + password login. See "Log In.png" reference.
+/// Routing to the right home screen after a successful login lives in
+/// role_router.dart, shared with RegisterScreen.
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key, required this.apiClient});
 
@@ -18,91 +24,70 @@ class LoginScreen extends StatefulWidget {
 class _LoginScreenState extends State<LoginScreen> {
   final _phoneController = TextEditingController();
   final _passwordController = TextEditingController();
+  final _phoneFocus = FocusNode();
+  final _passwordFocus = FocusNode();
+  late final TapGestureRecognizer _registerTapRecognizer;
 
-  bool _isRegisterMode = false;
-  String _registerRole = 'passenger';
   bool _isSubmitting = false;
-  String? _errorMessage;
+  String? _phoneError;
+  String? _passwordError;
+  String? _formError;
+
+  @override
+  void initState() {
+    super.initState();
+    _registerTapRecognizer = TapGestureRecognizer()..onTap = _goToRegister;
+    _phoneFocus.addListener(() {
+      if (!_phoneFocus.hasFocus) {
+        setState(() => _phoneError = validatePhoneNumber(_phoneController.text.trim()));
+      }
+    });
+    _passwordFocus.addListener(() {
+      if (!_passwordFocus.hasFocus && _passwordController.text.isEmpty) {
+        setState(() => _passwordError = 'Kata sandi wajib diisi');
+      }
+    });
+  }
 
   @override
   void dispose() {
     _phoneController.dispose();
     _passwordController.dispose();
+    _phoneFocus.dispose();
+    _passwordFocus.dispose();
+    _registerTapRecognizer.dispose();
     super.dispose();
   }
 
   Future<void> _submit() async {
+    final phoneError = validatePhoneNumber(_phoneController.text.trim());
+    final passwordError = _passwordController.text.isEmpty ? 'Kata sandi wajib diisi' : null;
     setState(() {
-      _isSubmitting = true;
-      _errorMessage = null;
+      _phoneError = phoneError;
+      _passwordError = passwordError;
+      _formError = null;
     });
+    if (phoneError != null || passwordError != null) return;
 
+    setState(() => _isSubmitting = true);
     try {
-      final result = _isRegisterMode
-          ? await widget.apiClient.register(
-              phoneNumber: _phoneController.text.trim(),
-              password: _passwordController.text,
-              role: _registerRole,
-            )
-          : await widget.apiClient.login(
-              phoneNumber: _phoneController.text.trim(),
-              password: _passwordController.text,
-            );
-
+      final result = await widget.apiClient.login(
+        phoneNumber: '+62${_phoneController.text.trim()}',
+        password: _passwordController.text,
+      );
       if (!mounted) return;
-      _routeByRole(result);
-    } on AuthException catch (e) {
-      setState(() => _errorMessage = e.message);
+      routeByRole(context, result);
     } catch (e) {
-      setState(() => _errorMessage = 'Could not reach gateway: $e');
+      setState(() => _formError = friendlyAuthError(e));
     } finally {
       if (mounted) setState(() => _isSubmitting = false);
     }
   }
 
-  // page mapping by role
-  void _routeByRole(AuthResult result) {
-    switch (result.role) {
-      case 'passenger':
-        Navigator.of(context).pushReplacement(
-          MaterialPageRoute(
-            builder: (_) => PassengerHome(token: result.token),
-          ),
-        );
-        return;
-      case 'driver':
-        Navigator.of(context).pushReplacement(
-          MaterialPageRoute(
-            builder: (_) => DriverHome(token: result.token),
-          ),
-        );
-        return;
-      case 'government':
-        Navigator.of(context).pushReplacement(
-          MaterialPageRoute(
-            builder: (_) => GovernmentHome(token: result.token),
-          ),
-        );
-        return;
-      default:
-        _showUnsupportedRoleDialog(
-          'Role "${result.role}" is not supported in the mobile app.',
-        );
-    }
-  }
-
-  void _showUnsupportedRoleDialog(String message) {
-    showDialog<void>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Wrong app for this account'),
-        content: Text(message),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('OK'),
-          ),
-        ],
+  void _goToRegister() {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => RegisterScreen(apiClient: widget.apiClient),
       ),
     );
   }
@@ -110,66 +95,99 @@ class _LoginScreenState extends State<LoginScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('KONEKTA')),
-      body: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 360),
-          child: Padding(
-            padding: const EdgeInsets.all(24),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                TextField(
-                  controller: _phoneController,
-                  keyboardType: TextInputType.phone,
-                  decoration: const InputDecoration(labelText: 'Phone number'),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: _passwordController,
-                  obscureText: true,
-                  decoration: const InputDecoration(labelText: 'Password'),
-                ),
-                if (_isRegisterMode) ...[
-                  const SizedBox(height: 12),
-                  DropdownButtonFormField<String>(
-                    initialValue: _registerRole,
-                    decoration: const InputDecoration(labelText: 'Role'),
-                    items: const [
-                      DropdownMenuItem(value: 'passenger', child: Text('Passenger')),
-                      DropdownMenuItem(value: 'driver', child: Text('Driver')),
-                      DropdownMenuItem(value: 'government', child: Text('Government')),
-                    ],
-                    onChanged: (value) {
-                      if (value != null) setState(() => _registerRole = value);
-                    },
+      body: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(
+            horizontal: AppSpacing.containerMargin,
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const SizedBox(height: AppSpacing.xl * 2),
+              const Center(
+                child: KonektaLogo(width: 140),
+              ),
+              const SizedBox(height: AppSpacing.xl),
+              const Text('Nomor Telepon', style: AppTextStyles.bodyMd),
+              const SizedBox(height: AppSpacing.xs),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(
+                    height: 52,
+                    padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      color: AppColors.inputFill,
+                      borderRadius: BorderRadius.circular(AppRadius.standard),
+                      border: Border.all(color: AppColors.inputFillBorder),
+                    ),
+                    child: const Text('+62', style: AppTextStyles.bodyMd),
+                  ),
+                  const SizedBox(width: AppSpacing.xs),
+                  Expanded(
+                    child: TextField(
+                      controller: _phoneController,
+                      focusNode: _phoneFocus,
+                      keyboardType: TextInputType.number,
+                      inputFormatters: [
+                        FilteringTextInputFormatter.digitsOnly,
+                        LengthLimitingTextInputFormatter(12),
+                      ],
+                      onChanged: (_) {
+                        if (_phoneError != null) setState(() => _phoneError = null);
+                      },
+                      decoration: InputDecoration(errorText: _phoneError),
+                    ),
                   ),
                 ],
-                if (_errorMessage != null) ...[
-                  const SizedBox(height: 12),
-                  Text(_errorMessage!, style: const TextStyle(color: Colors.red)),
-                ],
-                const SizedBox(height: 20),
-                ElevatedButton(
-                  onPressed: _isSubmitting ? null : _submit,
-                  child: Text(_isSubmitting
-                      ? 'Please wait...'
-                      : (_isRegisterMode ? 'Register' : 'Login')),
-                ),
-                TextButton(
-                  onPressed: _isSubmitting
-                      ? null
-                      : () => setState(() {
-                            _isRegisterMode = !_isRegisterMode;
-                            _errorMessage = null;
-                          }),
-                  child: Text(_isRegisterMode
-                      ? 'Already have an account? Login'
-                      : "Don't have an account? Register"),
+              ),
+              const SizedBox(height: AppSpacing.md),
+              const Text('Kata Sandi', style: AppTextStyles.bodyMd),
+              const SizedBox(height: AppSpacing.xs),
+              TextField(
+                controller: _passwordController,
+                focusNode: _passwordFocus,
+                obscureText: true,
+                onChanged: (_) {
+                  if (_passwordError != null) setState(() => _passwordError = null);
+                },
+                onSubmitted: (_) => _submit(),
+                decoration: InputDecoration(errorText: _passwordError),
+              ),
+              if (_formError != null) ...[
+                const SizedBox(height: AppSpacing.sm),
+                Text(
+                  _formError!,
+                  style: AppTextStyles.bodySm.copyWith(color: AppColors.error),
                 ),
               ],
-            ),
+              const Spacer(),
+              ElevatedButton(
+                onPressed: _isSubmitting ? null : _submit,
+                child: Text(_isSubmitting ? 'Memuat...' : 'Masuk'),
+              ),
+              const SizedBox(height: AppSpacing.md),
+              Center(
+                child: RichText(
+                  text: TextSpan(
+                    style: AppTextStyles.bodyMd.copyWith(color: AppColors.onSurface),
+                    children: [
+                      const TextSpan(text: 'Belum punya akun? '),
+                      TextSpan(
+                        text: 'Daftar',
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w700,
+                          decoration: TextDecoration.underline,
+                        ),
+                        recognizer: _isSubmitting ? null : _registerTapRecognizer,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: AppSpacing.xl),
+            ],
           ),
         ),
       ),
