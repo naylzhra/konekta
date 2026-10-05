@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Pre-Flutter-engine native splash. Matches core/theme/konekta_theme.dart's
+     AppColors.primaryContainer + the white-tinted KonektaLogo shown by
+     SplashScreen, so there's no white/default-icon flash before Flutter's
+     first frame draws. See drawable-v21 for the tinted (API 21+) variant. -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:drawable="@color/launch_background" />
+    <item>
+        <bitmap
+            android:gravity="center"
+            android:src="@drawable/launch_logo" />
+    </item>
+</layer-list>

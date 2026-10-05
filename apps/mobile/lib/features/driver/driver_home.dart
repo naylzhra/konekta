@@ -5,7 +5,9 @@ import '../../core/api/api_client.dart';
 // TODO: replace with real driver flow (accept assignment, navigate to
 // virtual stop, mark passengers picked up) once those APIs exist.
 class DriverHome extends StatefulWidget {
-  const DriverHome({super.key});
+  const DriverHome({super.key, required this.token});
+
+  final String token;
 
   @override
   State<DriverHome> createState() => _DriverHomeState();
