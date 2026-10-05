@@ -21,6 +21,7 @@ flutter:
   uses-material-design: true
   assets:
     - assets/logo.png
+    - assets/logo_putih.png
   # Manrope/HankenGrotesk-Variable.ttf are single variable-font files;
   # listing the same asset under multiple `weight:` entries makes Flutter
   # pick the matching weight axis instance instead of always rendering

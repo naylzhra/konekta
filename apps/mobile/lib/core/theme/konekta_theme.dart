@@ -47,11 +47,8 @@ class AppColors {
   static const background = Color(0xFFFCF8FF);
   static const onBackground = Color(0xFF191540);
 
-  /// Neutral gray for input field fills (phone/password boxes etc), as
-  /// opposed to the purple-tinted surface-container tokens above -- kept
-  /// separate since DESIGN.md's tonal-purple surfaces don't cover this.
-  static const inputFill = Color(0xFFEEEEEE);
-  static const inputFillBorder = Color(0xFFE0E0E0);
+  static const inputFill = Color(0x80F0E7F6);
+  static const inputFillBorder = Color.fromARGB(180, 202, 193, 211);
 }
 
 class AppSpacing {
@@ -78,9 +75,6 @@ class AppRadius {
   static const full = 9999.0;
 }
 
-/// Type scale from DESIGN.md: Hanken Grotesk for headlines, Manrope for
-/// body/label text. Both are bundled under assets/fonts (variable fonts,
-/// see pubspec.yaml's `fonts:` block).
 class AppTextStyles {
   AppTextStyles._();
 

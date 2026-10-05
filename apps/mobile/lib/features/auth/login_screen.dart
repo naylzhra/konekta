@@ -5,13 +5,11 @@ import 'package:flutter/services.dart';
 import '../../core/api/api_client.dart';
 import '../../core/theme/konekta_theme.dart';
 import '../../shared_widgets/konekta_logo.dart';
+import '../../shared_widgets/password_field.dart';
 import 'auth_validators.dart';
 import 'register_screen.dart';
 import 'role_router.dart';
 
-/// Phone number + password login. See "Log In.png" reference.
-/// Routing to the right home screen after a successful login lives in
-/// role_router.dart, shared with RegisterScreen.
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key, required this.apiClient});
 
@@ -105,7 +103,7 @@ class _LoginScreenState extends State<LoginScreen> {
             children: [
               const SizedBox(height: AppSpacing.xl * 2),
               const Center(
-                child: KonektaLogo(width: 140),
+                child: KonektaLogo(width: 200),
               ),
               const SizedBox(height: AppSpacing.xl),
               const Text('Nomor Telepon', style: AppTextStyles.bodyMd),
@@ -142,18 +140,17 @@ class _LoginScreenState extends State<LoginScreen> {
                   ),
                 ],
               ),
-              const SizedBox(height: AppSpacing.md),
+              const SizedBox(height: AppSpacing.xl),
               const Text('Kata Sandi', style: AppTextStyles.bodyMd),
               const SizedBox(height: AppSpacing.xs),
-              TextField(
+              PasswordField(
                 controller: _passwordController,
                 focusNode: _passwordFocus,
-                obscureText: true,
                 onChanged: (_) {
                   if (_passwordError != null) setState(() => _passwordError = null);
                 },
                 onSubmitted: (_) => _submit(),
-                decoration: InputDecoration(errorText: _passwordError),
+                errorText: _passwordError,
               ),
               if (_formError != null) ...[
                 const SizedBox(height: AppSpacing.sm),

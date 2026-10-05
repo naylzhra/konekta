@@ -3,23 +3,17 @@ import 'package:flutter/services.dart';
 
 import '../../core/api/api_client.dart';
 import '../../core/theme/konekta_theme.dart';
+import '../../shared_widgets/password_field.dart';
 import 'auth_validators.dart';
 import 'role_router.dart';
 
-/// Indonesian label -> backend role value. Order matches the dropdown
-/// hint text on "Sign In - 3.png" ("Pengemudi/Penumpang/Pemerintah").
 const _roleOptions = {
   'Pengemudi': 'driver',
   'Penumpang': 'passenger',
   'Pemerintah': 'government',
 };
 
-/// 3-step registration wizard: phone number -> password -> role.
-/// See "Sign In - 1.png" / "Sign In - 2.png" / "Sign In - 3.png".
-///
-/// TODO: government accounts will likely need a different intake form
-/// (agency verification, etc) eventually; for now all 3 roles go through
-/// this same basic flow, just with a different final answer at step 3.
+// TODO: add specific role form field
 class RegisterScreen extends StatefulWidget {
   const RegisterScreen({super.key, required this.apiClient});
 
@@ -158,16 +152,24 @@ class _RegisterScreenState extends State<RegisterScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              const SizedBox(height: AppSpacing.sm),
               Row(
                 children: [
                   IconButton(
                     onPressed: _isSubmitting ? null : _back,
                     icon: const Icon(Icons.arrow_back, color: AppColors.onSurface),
                     padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
+                    style: IconButton.styleFrom(
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                  ),
+                  const SizedBox(width: AppSpacing.sm),
+                  const Expanded(
+                    child: Text('Daftar', style: AppTextStyles.headlineLg),
                   ),
                 ],
               ),
-              const Text('Daftar', style: AppTextStyles.headlineLg),
               const SizedBox(height: AppSpacing.xl),
               Expanded(child: _buildStep()),
               if (_formError != null) ...[
@@ -310,27 +312,22 @@ class _PasswordStep extends StatelessWidget {
       children: [
         const Text('Kata Sandi', style: AppTextStyles.bodyMd),
         const SizedBox(height: AppSpacing.xs),
-        TextField(
+        PasswordField(
           controller: passwordController,
           focusNode: passwordFocus,
-          obscureText: true,
           autofocus: true,
           onChanged: (_) => onPasswordChanged(),
-          decoration: InputDecoration(
-            errorText: passwordError,
-            helperText: 'Minimal 8 karakter, ada angka dan karakter spesial',
-            helperMaxLines: 2,
-          ),
+          errorText: passwordError,
+          helperText: 'Minimal 8 karakter, ada angka dan karakter spesial',
         ),
-        const SizedBox(height: AppSpacing.md),
+        const SizedBox(height: AppSpacing.lg),
         const Text('Ulangi Kata Sandi', style: AppTextStyles.bodyMd),
         const SizedBox(height: AppSpacing.xs),
-        TextField(
+        PasswordField(
           controller: confirmPasswordController,
           focusNode: confirmPasswordFocus,
-          obscureText: true,
           onChanged: (_) => onConfirmPasswordChanged(),
-          decoration: InputDecoration(errorText: confirmPasswordError),
+          errorText: confirmPasswordError,
         ),
       ],
     );
@@ -352,7 +349,7 @@ class _RoleStep extends StatelessWidget {
         const SizedBox(height: AppSpacing.xs),
         DropdownButtonFormField<String>(
           initialValue: selectedLabel,
-          hint: const Text('Pengemudi/Penumpang/Pemerintah'),
+          hint: const Text('Pilih jenis pengguna'),
           items: _roleOptions.keys
               .map((label) => DropdownMenuItem(value: label, child: Text(label)))
               .toList(),

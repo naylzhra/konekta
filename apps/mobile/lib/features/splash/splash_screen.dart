@@ -7,9 +7,7 @@ import '../../core/theme/konekta_theme.dart';
 import '../../shared_widgets/konekta_logo.dart';
 import '../auth/login_screen.dart';
 
-/// First screen shown on launch: solid primary-container background with
-/// the KONEKTA mark, then auto-advances to LoginScreen after a short
-/// delay. See "Splash Screen.png" reference.
+
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key, required this.apiClient});
 
@@ -48,7 +46,7 @@ class _SplashScreenState extends State<SplashScreen> {
     return const Scaffold(
       backgroundColor: AppColors.primaryContainer,
       body: Center(
-        child: KonektaLogo(width: 180, tintWhite: true),
+        child: KonektaLogo(width: 240, tintWhite: true),
       ),
     );
   }
