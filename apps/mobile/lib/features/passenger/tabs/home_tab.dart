@@ -1,17 +1,17 @@
 import 'package:flutter/material.dart';
 
-import '../../core/api/api_client.dart';
+import '../../../core/api/api_client.dart';
+import '../../../core/theme/konekta_theme.dart';
 
-class PassengerHome extends StatefulWidget {
-  const PassengerHome({super.key, required this.token});
-
-  final String token;
+// TODO: replace with real passenger home
+class HomeTab extends StatefulWidget {
+  const HomeTab({super.key});
 
   @override
-  State<PassengerHome> createState() => _PassengerHomeState();
+  State<HomeTab> createState() => _HomeTabState();
 }
 
-class _PassengerHomeState extends State<PassengerHome> {
+class _HomeTabState extends State<HomeTab> {
   final _apiClient = ApiClient();
   String _status = 'checking gateway...';
 
@@ -34,9 +34,6 @@ class _PassengerHomeState extends State<PassengerHome> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('Passenger')),
-      body: Center(child: Text(_status)),
-    );
+    return Center(child: Text(_status, style: AppTextStyles.bodyMd));
   }
 }
