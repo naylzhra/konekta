@@ -2,12 +2,13 @@
 # (DESIGN.md §2, §5.1, §6). Money is integer rupiah (`*_idr`).
 from datetime import datetime
 from enum import StrEnum
-from typing import Generic, Literal, Optional, TypeVar
+from typing import Literal, Optional
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, Field
 
 from app.bookings.state_machine import BookingStatus
+from app.websocket.envelope import WsEnvelope
 
 
 class GeoPoint(BaseModel):
@@ -68,6 +69,8 @@ class TripPlan(BaseModel):
     pickup_stop: Optional[Stop] = None
     dropoff_stop: Optional[Stop] = None
     corridor_id: Optional[str] = None
+    # nearest available feeder's ETA to the pickup stop at planning time; not stored
+    nearest_feeder_eta_s: Optional[int] = None
     expires_at: datetime
 
 
@@ -157,6 +160,9 @@ class ErrorCode(StrEnum):
     NOT_FOUND = "not_found"
     CONSENT_REQUIRED = "consent_required"
     NO_ROUTE = "no_route"
+    ROUTING_UNAVAILABLE = "routing_unavailable"
+    CONCURRENT_UPDATE = "concurrent_update"
+    INVALID_CURSOR = "invalid_cursor"
 
 
 class ErrorDetail(BaseModel):
@@ -164,16 +170,7 @@ class ErrorDetail(BaseModel):
     message: str
 
 
-# --- WebSocket envelope (DESIGN.md §5.1) -----------------------------------
-
-PayloadT = TypeVar("PayloadT", bound=BaseModel)
-
-
-class WsEnvelope(BaseModel, Generic[PayloadT]):
-    model_config = ConfigDict(extra="forbid")
-
-    type: str
-    payload: PayloadT
+# --- WebSocket events (envelope: app/websocket/envelope.py) ----------------
 
 
 class StopUpdatedPayload(BaseModel):

@@ -1,4 +1,6 @@
-# TODO: most of the domain data (virtual_stops, ride_requests, feeder_locations) still doesn't have a schema yet (see infra/db/migrations).
+# Booking data (stops, trip_plans, bookings, consent_log) lives in
+# infra/db/migrations/004_bookings.sql.
+# TODO: feeder_locations and demand_points still don't have a schema yet (see infra/db/migrations).
 import os
 from typing import Optional
 

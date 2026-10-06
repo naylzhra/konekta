@@ -46,9 +46,16 @@ services:
       DATABASE_URL: postgresql://konekta:konekta@postgres:5432/konekta
       REDIS_URL: redis://redis:6379/0
       OSRM_BASE_URL: http://osrm-mock:8000
+      # Booking stubs until real implementations exist (DESIGN.md §5).
+      STOP_ASSIGNER: stub
+      FEEDER_PROVIDER: stub
+      STUB_FEEDER_SUPPLY: ${STUB_FEEDER_SUPPLY:-1}
+      # Demo-only driver simulator; set BOOKING_SIMULATOR=1 in your shell/.env to enable.
+      BOOKING_SIMULATOR: ${BOOKING_SIMULATOR:-0}
     depends_on:
       - postgres
       - redis
+      - osrm-mock
 
   pooling-service:
     build:
