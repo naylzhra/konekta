@@ -125,3 +125,70 @@ localhost) and hits gateway's `/health` endpoint.
 - No business logic is implemented yet. Every non-trivial module under
   `app/` has a `TODO` comment describing what real implementation is
   expected to do.
+
+## Known risks and open items
+
+Things that can bite you locally or that still need an owner/decision.
+Design-level open questions live in `DESIGN.md` §11.
+
+**Local dev**
+- **Gateway crashes on a fresh database.** In `docker-compose.yml`,
+  `gateway` uses `depends_on` without `condition: service_healthy` and has
+  no restart policy, so on first boot it connects before Postgres finishes
+  init and exits. Workaround: `docker compose -f infra/docker/docker-compose.yml start gateway`
+  once Postgres is healthy.
+- **Migrations only run on a fresh volume** (`docker-entrypoint-initdb.d`).
+  After pulling a new migration (e.g. `004_bookings.sql`), either reset
+  with `docker compose -f infra/docker/docker-compose.yml down -v` (wipes
+  local data) or apply the file with `psql`.
+- **Gateway tests must run in the gateway image (Python 3.11).** Pinned
+  `pydantic==2.9.2` does not install on newer host Pythons (e.g. 3.14).
+  DB-backed tests are skipped unless `TEST_DATABASE_URL` is set; they drop
+  and re-create a database whose name must end in `_test` (your dev
+  database is never touched). With the compose stack up:
+  ```bash
+  docker run --rm --network docker_default \
+    -v "$PWD/services/gateway:/app" -v "$PWD/infra/db/migrations:/migrations:ro" \
+    -e TEST_DATABASE_URL=postgresql://konekta:konekta@postgres:5432/konekta_test \
+    -e MIGRATIONS_DIR=/migrations -w /app docker-gateway:latest \
+    sh -c "pip install -q -r requirements-dev.txt && python -m pytest -q"
+  ```
+  (Git Bash on Windows: prefix with `MSYS_NO_PATHCONV=1`.)
+- **Session token appears in gateway access logs.** The WS endpoint takes
+  the token as `?token=` (existing auth/hub contract), and uvicorn's access
+  log prints the full URL. Needs a decision with auth: filter the access
+  log, or move the token out of the URL.
+- **WS hub is in-process.** `send_to_user()`/`publish()` only reach clients
+  connected to the same gateway process; more than one worker/replica
+  needs Redis pub/sub behind the hub.
+- **Flutter checks are not run everywhere.** Not every dev environment has
+  Flutter installed; PRs should state whether `flutter analyze` /
+  `flutter test` actually ran.
+- `apps/mobile/android/` is committed, contrary to the Flutter section
+  above; changes to `AndroidManifest.xml` affect everyone.
+
+**Booking / passenger trip**
+- **Boarding depends on the driver "arrived" signal.** A booking only moves
+  CONFIRMED → FEEDER_ARRIVING when the driver reports arriving at the
+  pickup stop (or the feeder comes within range). If neither happens, the
+  passenger cannot mark themselves boarded. Fine with the demo simulator;
+  a real driver app must send "arrived" reliably.
+- **Driver app UI has no owner.** `driver_home.dart` is a placeholder;
+  driver stop events come from a simulator for the demo
+  (`BOOKING_SIMULATOR=1 docker compose ... up gateway`).
+- **Driver ↔ feeder binding is trusted.** `POST /driver/stops/{id}/arrived|departed`
+  takes `feeder_id` from the request body; any driver account can act for
+  any feeder until a driver/feeder assignment exists.
+- **Fare is a placeholder tariff** (`app/bookings/config.py`: base + per-km,
+  rounded up to Rp500) until the real fare policy is decided.
+- **No real halte/corridor data.** Stop assignment uses clearly labelled
+  placeholder stops until real Bandung halte coordinates are provided.
+- **Passenger shell is not on `main`.** The tab shell/navbar lives on
+  `feat/user-live-tracking`; booking screens mount in `main`'s
+  `passenger_home.dart` until it is merged.
+- **Location encryption at rest is volume-level, not column-level.**
+  Column `pgcrypto` would break PostGIS spatial indexes; revisit if the
+  deployment plan requires column encryption (UU PDP).
+- **Suspended users mid-trip.** Auth's `require_not_suspended` reads the
+  session's `active_trip_id`, which booking does not set (the DB is the
+  source of truth for active bookings). Needs agreement with auth.

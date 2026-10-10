@@ -22,8 +22,8 @@ Rule: need a change in the other side's area → propose it here, don't edit the
 
 **Passenger**
 1. **Home** — "Ready to commute?" → destination input.
-2. **Plan Trip** — origin (default: current location via `UserLocationProvider`) + destination → route options with fare estimate, time, nearest feeder, pooling hint.
-3. **Consent** — first booking only: location-processing consent recorded (§8).
+2. **Consent** — first trip only: location-processing consent recorded before any location is sent for planning (§8).
+3. **Plan Trip** — origin (default: current location via `UserLocationProvider`) + destination → route options with fare estimate, time, nearest feeder, pooling hint.
 4. **Booking** — confirm → system assigns a **pickup stop** + feeder.
 5. **Walk to stop** — navigation/ETA to the stop (Map tab shows the feeder live).
 6. **Pickup → ride → drop-off** — real-time status. Passenger taps "Saya sudah naik" when on board.
@@ -141,11 +141,10 @@ Request to shell owner: `PassengerMain` passes the session into `HomeTab`/`Trips
 
 ## 6. Booking API
 REST (all require `Authorization: Bearer <token>`, passenger role unless noted):
-- `POST /trip-plans` → `TripPlan[]`
+- `POST /trip-plans` `{origin, destination, seats}` → `{plans: TripPlan[]}` (MVP returns one). Outside area / too short → 422 `no_route`. Routing down → 503 `routing_unavailable`. No consent → 403 `consent_required`.
 - `POST /bookings` + `Idempotency-Key` → `Booking`. Same key + same body → same booking (200). Same key + different body → 409. Plan expired → 410. Active booking exists → 409 `active_booking_exists`. No consent → 403 `consent_required`.
-- `POST /bookings/{id}/cancel` + `Idempotency-Key`, body `{reason}`
-- `POST /bookings/{id}/boarded` + `Idempotency-Key`
-- `GET /bookings/active` (204 if none) · `GET /bookings?cursor=`
+- `POST /bookings/{id}/cancel`, body `{reason?}` · `POST /bookings/{id}/boarded` — idempotent by state (repeating returns the current booking), so no `Idempotency-Key`. Wrong state → 409 `invalid_transition`.
+- `GET /bookings/active` (204 if none) · `GET /bookings?cursor=&limit=` → `{items, next_cursor}`
 - `POST /consents` `{purpose, policy_version, granted}` · `GET /consents`
 - Driver: §5.6.
 Errors: `{"detail": {"code": "...", "message": "..."}}`.
@@ -156,7 +155,7 @@ Loading plans · outside corridor / no route · no supply (FAILED) · matching w
 ## 8. Privacy (UU PDP)
 - Location requested only when needed, with stated purpose (live tracking owns the prompt).
 - No raw location trails persisted on device. No coordinates or user ids in logs (gateway and Flutter).
-- Consent recorded in `consent_log` (purpose `trip_location`) before the first booking; gateway enforces.
+- Consent recorded in `consent_log` (purpose `trip_location`, current `CONSENT_POLICY_VERSION`) before the first trip plan; gateway enforces on `/trip-plans` and `/bookings`, since plans already store origin/destination.
 - Location columns use `geography(Point,4326)` for spatial queries; at-rest encryption is at the storage/volume level per the deployment plan (column-level `pgcrypto` would break spatial indexes). Revisit if the deployment plan requires column encryption.
 - Retention/deletion job is backend-wide (not yet owned); clients must handle deleted/expired records gracefully.
 
