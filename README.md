@@ -13,7 +13,7 @@ forecasting, or dispatch) is implemented yet.
 
 ```
 apps/
-  (root)         Flutter mobile app (pubspec.yaml, lib/, android/) — single codebase, passenger + driver roles only
+  mobile/        Flutter mobile app (pubspec.yaml, lib/, android/) — single codebase, passenger + driver roles only
   dashboard/     React + Vite ops dashboard — Mapbox GL (map) + Recharts (charts) — government role only
 
 services/
@@ -120,18 +120,18 @@ npm run dev
 
 **Mobile (Flutter):**
 
-The `apps/` folder currently only contains the Dart source
-(`pubspec.yaml` + `lib/`) — no platform (`android/`/`ios/`) folders yet.
-Generate them once, then run as usual:
+The Flutter app lives in `apps/mobile/` (`android/` is committed; there's
+no `ios/` yet — run `flutter create .` there if you need it). Always run
+Flutter commands from that folder, so generated output (`.dart_tool/`,
+`build/`) lands in the right place:
 
 ```bash
-cd apps
-flutter create .      # adds android/, ios/, web/ scaffolding around the existing lib/
+cd apps/mobile
 flutter pub get
 flutter run
 ```
 
-The API client in `lib/core/api/api_client.dart` defaults to
+The API client in `apps/mobile/lib/core/api/api_client.dart` defaults to
 `http://10.0.2.2:8000` (the Android emulator's alias for the host's
 localhost) and hits gateway's `/health` endpoint.
 
@@ -147,28 +147,3 @@ localhost) and hits gateway's `/health` endpoint.
 - No business logic is implemented yet. Every non-trivial module under
   `app/` has a `TODO` comment describing what real implementation is
   expected to do.
-
-
-2. Restart Docker Desktop. Kalau masih error input/output, pakai Troubleshoot (ikon 🐞) → Restart.
-3. Bersihkan sisa build Docker yang gagal:
-docker builder prune -f
-docker image prune -f
-4. Build ulang:
-$env:COMPOSE_PARALLEL_LIMIT=1
-docker compose -f infra/docker/docker-compose.yml up --build
-
-Catatan:
-- Kalau tidak sedang butuh forecasting, cukup nyalakan service yang dibutuhkan saja. Ini
-  menghemat ±1 GB:
-docker compose -f infra/docker/docker-compose.yml up --build postgres redis osrm-mock gateway
-pooling-service
-- Kalau setelah ruang dikosongkan Docker tetap error I/O, kemungkinan virtual disk-nya sudah
-  rusak. Pakai Troubleshoot → Clean / Purge data. Semua image dan volume Docker akan terhapus,
-  termasuk data Postgres lokal, tapi data itu bisa dibuat ulang dari migration.          
-✻ Churned for 36s · done 9:18 PM                                                                
-──────────────────────────────────────── 1 new message ────────────────────────────────────────                                                                                             cap: You're trying to get the KONEKTA services running in Docker, but the build failed
-  because drive C: is almost full (about 19 MB free). Next, free up 10–20 GB on C:, restart
-  Docker Desktop, and rebuild. (disable recaps in /config)
-                                                         ✔ Update installed · Restart to apply
-────────────────────────────────────────────────────────────────────────────────────────────────
-❯ udah dikosongin, sekarang errornya apa

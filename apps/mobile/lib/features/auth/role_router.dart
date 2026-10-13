@@ -9,14 +9,14 @@ import '../passenger/passenger_home.dart';
 /// auth stack (splash/login/register) so back-navigation doesn't return
 /// to a login/register screen once signed in.
 ///
-///   passenger  -> PassengerHome
+///   passenger  -> PassengerMain
 ///   driver     -> DriverHome
 ///   anything else -> a dialog. Shouldn't happen in practice: ApiClient
 ///   already rejects non-mobile roles (government uses the web dashboard,
 ///   admin has no client) before a result gets here.
 void routeByRole(BuildContext context, AuthResult result) {
   final Widget? home = switch (result.role) {
-    'passenger' => PassengerHome(token: result.token),
+    'passenger' => PassengerMain(token: result.token),
     'driver' => DriverHome(token: result.token),
     _ => null,
   };

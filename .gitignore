@@ -17,10 +17,8 @@ dist/
 apps/**/build/
 .flutter-plugins
 .flutter-plugins-dependencies
-# Leftovers from when the Flutter app lived directly in apps/
-/apps/build/
-/apps/android/
-/apps/package-lock.json
+**/android/.gradle/
+**/android/local.properties
 
 # Docker/OS
 .DS_Store
