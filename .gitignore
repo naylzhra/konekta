@@ -13,10 +13,14 @@ node_modules/
 dist/
 
 # Flutter/Dart
-apps/mobile/.dart_tool/
-apps/mobile/build/
-apps/mobile/.flutter-plugins
-apps/mobile/.flutter-plugins-dependencies
+.dart_tool/
+apps/**/build/
+.flutter-plugins
+.flutter-plugins-dependencies
+# Leftovers from when the Flutter app lived directly in apps/
+/apps/build/
+/apps/android/
+/apps/package-lock.json
 
 # Docker/OS
 .DS_Store

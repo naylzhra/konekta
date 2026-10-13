@@ -13,8 +13,8 @@ forecasting, or dispatch) is implemented yet.
 
 ```
 apps/
-  mobile/        Flutter app — single codebase, passenger + driver roles
-  dashboard/     React + Vite ops dashboard — Mapbox GL (map) + Recharts (charts)
+  (root)         Flutter mobile app (pubspec.yaml, lib/, android/) — single codebase, passenger + driver roles only
+  dashboard/     React + Vite ops dashboard — Mapbox GL (map) + Recharts (charts) — government role only
 
 services/
   gateway/                     FastAPI — REST + WebSocket entrypoint for apps
@@ -61,6 +61,28 @@ from the `OSRM_BASE_URL` env var, which defaults to `osrm-mock`. Once the
 real Bandung map data is processed and a real OSRM instance is deployed,
 switching over is just changing `OSRM_BASE_URL` — no code changes needed.
 
+## Roles & which client they use
+
+| Role        | Client                   | How the account is created                      |
+|-------------|--------------------------|-------------------------------------------------|
+| `passenger` | Mobile app               | Self-register (`POST /auth/register`)           |
+| `driver`    | Mobile app               | Self-register (`POST /auth/register`)           |
+| `government`| Web dashboard            | `python -m app.cli.create_user` (gateway)       |
+| `admin`     | — (API only)             | `python -m app.cli.create_user` (gateway)       |
+
+`/auth/register` only accepts `passenger`/`driver`. Both clients log in via
+`POST /auth/login` and reject roles that aren't theirs (logging the session
+back out): the mobile app rejects anything but passenger/driver, the
+dashboard anything but government. Create a government account with:
+
+```bash
+docker compose -f infra/docker/docker-compose.yml exec gateway python -m app.cli.create_user --phone +6281234567890 --role government
+```
+
+The dashboard calls the gateway from the browser, so its origin must be in
+the gateway's `CORS_ORIGINS` (defaults to `http://localhost:5173`, vite's
+dev server).
+
 ## Running locally
 
 Prerequisites: Docker + Docker Compose.
@@ -98,12 +120,12 @@ npm run dev
 
 **Mobile (Flutter):**
 
-The `apps/mobile` folder currently only contains the Dart source
+The `apps/` folder currently only contains the Dart source
 (`pubspec.yaml` + `lib/`) — no platform (`android/`/`ios/`) folders yet.
 Generate them once, then run as usual:
 
 ```bash
-cd apps/mobile
+cd apps
 flutter create .      # adds android/, ios/, web/ scaffolding around the existing lib/
 flutter pub get
 flutter run
@@ -125,3 +147,28 @@ localhost) and hits gateway's `/health` endpoint.
 - No business logic is implemented yet. Every non-trivial module under
   `app/` has a `TODO` comment describing what real implementation is
   expected to do.
+
+
+2. Restart Docker Desktop. Kalau masih error input/output, pakai Troubleshoot (ikon 🐞) → Restart.
+3. Bersihkan sisa build Docker yang gagal:
+docker builder prune -f
+docker image prune -f
+4. Build ulang:
+$env:COMPOSE_PARALLEL_LIMIT=1
+docker compose -f infra/docker/docker-compose.yml up --build
+
+Catatan:
+- Kalau tidak sedang butuh forecasting, cukup nyalakan service yang dibutuhkan saja. Ini
+  menghemat ±1 GB:
+docker compose -f infra/docker/docker-compose.yml up --build postgres redis osrm-mock gateway
+pooling-service
+- Kalau setelah ruang dikosongkan Docker tetap error I/O, kemungkinan virtual disk-nya sudah
+  rusak. Pakai Troubleshoot → Clean / Purge data. Semua image dan volume Docker akan terhapus,
+  termasuk data Postgres lokal, tapi data itu bisa dibuat ulang dari migration.          
+✻ Churned for 36s · done 9:18 PM                                                                
+──────────────────────────────────────── 1 new message ────────────────────────────────────────                                                                                             cap: You're trying to get the KONEKTA services running in Docker, but the build failed
+  because drive C: is almost full (about 19 MB free). Next, free up 10–20 GB on C:, restart
+  Docker Desktop, and rebuild. (disable recaps in /config)
+                                                         ✔ Update installed · Restart to apply
+────────────────────────────────────────────────────────────────────────────────────────────────
+❯ udah dikosongin, sekarang errornya apa

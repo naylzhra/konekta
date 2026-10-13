@@ -36,6 +36,8 @@ String friendlyAuthError(Object error) {
       'Phone number already registered': 'Nomor telepon sudah terdaftar',
       'Invalid phone number or password': 'Nomor telepon atau kata sandi salah',
       'Account suspended': 'Akun Anda ditangguhkan',
+      unsupportedRoleMessage:
+          'Akun ini tidak dapat digunakan di aplikasi mobile. Silakan masuk melalui dashboard web.',
     };
     for (final entry in knownMessages.entries) {
       if (error.message.contains(entry.key)) return entry.value;

@@ -7,10 +7,11 @@ import '../../shared_widgets/password_field.dart';
 import 'auth_validators.dart';
 import 'role_router.dart';
 
+// Government accounts use the web dashboard (apps/dashboard) and aren't
+// self-registrable.
 const _roleOptions = {
   'Pengemudi': 'driver',
   'Penumpang': 'passenger',
-  'Pemerintah': 'government',
 };
 
 // TODO: add specific role form field

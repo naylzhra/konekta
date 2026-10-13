@@ -15,6 +15,14 @@ class AuthResult {
 }
 
 
+/// Roles that have a home screen in the mobile app. Government accounts
+/// sign in through the web dashboard instead.
+const mobileRoles = {'passenger', 'driver'};
+
+/// Thrown when the credentials are valid but the account's role can't use
+/// the mobile app.
+const unsupportedRoleMessage = 'Role not supported in mobile app';
+
 class AuthException implements Exception {
   AuthException(this.message);
 
@@ -70,7 +78,22 @@ class ApiClient {
         'password': password,
       }),
     );
-    return _parseAuthResponse(response);
+    final result = _parseAuthResponse(response);
+    if (!mobileRoles.contains(result.role)) {
+      // Don't leave a live session behind for an account we won't let in.
+      try {
+        await logout(result.token);
+      } catch (_) {}
+      throw AuthException(unsupportedRoleMessage);
+    }
+    return result;
+  }
+
+  Future<void> logout(String token) async {
+    await http.post(
+      Uri.parse('$baseUrl/auth/logout'),
+      headers: {'Authorization': 'Bearer $token'},
+    );
   }
 
   AuthResult _parseAuthResponse(http.Response response) {
