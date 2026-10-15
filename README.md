@@ -13,8 +13,8 @@ forecasting, or dispatch) is implemented yet.
 
 ```
 apps/
-  mobile/        Flutter app — single codebase, passenger + driver roles
-  dashboard/     React + Vite ops dashboard — Mapbox GL (map) + Recharts (charts)
+  mobile/        Flutter mobile app (pubspec.yaml, lib/, android/) — single codebase, passenger + driver roles only
+  dashboard/     React + Vite ops dashboard — Mapbox GL (map) + Recharts (charts) — government role only
 
 services/
   gateway/                     FastAPI — REST + WebSocket entrypoint for apps
@@ -61,6 +61,28 @@ from the `OSRM_BASE_URL` env var, which defaults to `osrm-mock`. Once the
 real Bandung map data is processed and a real OSRM instance is deployed,
 switching over is just changing `OSRM_BASE_URL` — no code changes needed.
 
+## Roles & which client they use
+
+| Role        | Client                   | How the account is created                      |
+|-------------|--------------------------|-------------------------------------------------|
+| `passenger` | Mobile app               | Self-register (`POST /auth/register`)           |
+| `driver`    | Mobile app               | Self-register (`POST /auth/register`)           |
+| `government`| Web dashboard            | `python -m app.cli.create_user` (gateway)       |
+| `admin`     | — (API only)             | `python -m app.cli.create_user` (gateway)       |
+
+`/auth/register` only accepts `passenger`/`driver`. Both clients log in via
+`POST /auth/login` and reject roles that aren't theirs (logging the session
+back out): the mobile app rejects anything but passenger/driver, the
+dashboard anything but government. Create a government account with:
+
+```bash
+docker compose -f infra/docker/docker-compose.yml exec gateway python -m app.cli.create_user --phone +6281234567890 --role government
+```
+
+The dashboard calls the gateway from the browser, so its origin must be in
+the gateway's `CORS_ORIGINS` (defaults to `http://localhost:5173`, vite's
+dev server).
+
 ## Running locally
 
 Prerequisites: Docker + Docker Compose.
@@ -98,18 +120,18 @@ npm run dev
 
 **Mobile (Flutter):**
 
-The `apps/mobile` folder currently only contains the Dart source
-(`pubspec.yaml` + `lib/`) — no platform (`android/`/`ios/`) folders yet.
-Generate them once, then run as usual:
+The Flutter app lives in `apps/mobile/` (`android/` is committed; there's
+no `ios/` yet — run `flutter create .` there if you need it). Always run
+Flutter commands from that folder, so generated output (`.dart_tool/`,
+`build/`) lands in the right place:
 
 ```bash
 cd apps/mobile
-flutter create .      # adds android/, ios/, web/ scaffolding around the existing lib/
 flutter pub get
 flutter run
 ```
 
-The API client in `lib/core/api/api_client.dart` defaults to
+The API client in `apps/mobile/lib/core/api/api_client.dart` defaults to
 `http://10.0.2.2:8000` (the Android emulator's alias for the host's
 localhost) and hits gateway's `/health` endpoint.
 

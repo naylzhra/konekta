@@ -13,10 +13,12 @@ node_modules/
 dist/
 
 # Flutter/Dart
-apps/.dart_tool/
-apps/build/
-apps/.flutter-plugins
-apps/.flutter-plugins-dependencies
+.dart_tool/
+apps/**/build/
+.flutter-plugins
+.flutter-plugins-dependencies
+**/android/.gradle/
+**/android/local.properties
 
 # Docker/OS
 .DS_Store

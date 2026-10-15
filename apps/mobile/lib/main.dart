@@ -10,13 +10,14 @@ void main() {
 
 class KonektaApp extends StatelessWidget {
   const KonektaApp({super.key});
+  static final _theme = KonektaTheme.light();
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'KONEKTA',
       debugShowCheckedModeBanner: false,
-      theme: KonektaTheme.light(),
+      theme: _theme,
       home: SplashScreen(apiClient: ApiClient()),
     );
   }

@@ -15,6 +15,14 @@ class AuthResult {
 }
 
 
+/// Roles that have a home screen in the mobile app. Government accounts
+/// sign in through the web dashboard instead.
+const mobileRoles = {'passenger', 'driver'};
+
+/// Thrown when the credentials are valid but the account's role can't use
+/// the mobile app.
+const unsupportedRoleMessage = 'Role not supported in mobile app';
+
 class AuthException implements Exception {
   AuthException(this.message);
 
@@ -24,15 +32,19 @@ class AuthException implements Exception {
   String toString() => message;
 }
 
+final _sharedHttpClient = http.Client();
+const _requestTimeout = Duration(seconds: 10);
 
 /// TODO: move base URL to build-time config
 class ApiClient {
-  ApiClient({this.baseUrl = 'http://10.0.2.2:8000'});
+  ApiClient({this.baseUrl = 'http://10.0.2.2:8000', http.Client? httpClient})
+      : _http = httpClient ?? _sharedHttpClient;
 
   final String baseUrl;
+  final http.Client _http;
 
   Future<Map<String, dynamic>> checkHealth() async {
-    final response = await http.get(Uri.parse('$baseUrl/health'));
+    final response = await _http.get(Uri.parse('$baseUrl/health')).timeout(_requestTimeout);
     if (response.statusCode != 200) {
       throw Exception('Gateway health check failed: ${response.statusCode}');
     }
@@ -46,7 +58,7 @@ class ApiClient {
     required String password,
     required String role,
   }) async {
-    final response = await http.post(
+    final response = await _http.post(
       Uri.parse('$baseUrl/auth/register'),
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({
@@ -54,7 +66,7 @@ class ApiClient {
         'password': password,
         'role': role,
       }),
-    );
+    ).timeout(_requestTimeout);
     return _parseAuthResponse(response);
   }
 
@@ -62,15 +74,30 @@ class ApiClient {
     required String phoneNumber,
     required String password,
   }) async {
-    final response = await http.post(
+    final response = await _http.post(
       Uri.parse('$baseUrl/auth/login'),
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({
         'phone_number': phoneNumber,
         'password': password,
       }),
-    );
-    return _parseAuthResponse(response);
+    ).timeout(_requestTimeout);
+    final result = _parseAuthResponse(response);
+    if (!mobileRoles.contains(result.role)) {
+      // Don't leave a live session behind for an account we won't let in.
+      try {
+        await logout(result.token);
+      } catch (_) {}
+      throw AuthException(unsupportedRoleMessage);
+    }
+    return result;
+  }
+
+  Future<void> logout(String token) async {
+    await _http.post(
+      Uri.parse('$baseUrl/auth/logout'),
+      headers: {'Authorization': 'Bearer $token'},
+    ).timeout(_requestTimeout);
   }
 
   AuthResult _parseAuthResponse(http.Response response) {
