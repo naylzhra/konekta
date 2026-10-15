@@ -7,7 +7,7 @@ class LiveTrackingStrings {
   static const startDuty = 'Mulai Bertugas';
   static const stopDuty = 'Selesai Bertugas';
   static const starting = 'Menyiapkan lokasi...';
-  static const onDuty = 'Sedang bertugas — lokasi dibagikan';
+  static const onDuty = 'Sedang bertugas, lokasi dibagikan';
   static const offDuty = 'Tidak bertugas';
   static String lastSent(String time) => 'Terakhir terkirim $time';
   static const waitingFirstFix = 'Menunggu sinyal GPS...';
@@ -53,4 +53,26 @@ class LiveTrackingStrings {
 
   // Map
   static const osmAttribution = 'OpenStreetMap contributors';
+
+  // Passenger map
+  static const noActiveTrip = 'Belum ada perjalanan aktif';
+  static const noActiveTripHint = 'Pesan feeder dari tab Home untuk melihat posisinya di sini.';
+  static const searchingFeeder = 'Mencari feeder untuk perjalanan Anda...';
+  static const waitingFeederPosition = 'Menunggu posisi feeder...';
+  static String feederTitle(String feederId) => 'Feeder $feederId';
+  static String toPickup(String distance) => '$distance dari halte jemput';
+  static String pickupAt(String stopName) => 'Halte jemput: $stopName';
+  static const onBoard = 'Anda sedang di dalam feeder';
+  static String occupancy(int count) => '$count penumpang di dalam';
+  static String updatedAt(String time) => 'Diperbarui $time';
+  static const feederStale = 'Posisi feeder tidak diperbarui. Feeder mungkin sedang offline.';
+  static String feederStaleSince(String time) => 'Posisi terakhir pukul $time';
+  static const reconnecting = 'Koneksi terputus, menyambungkan ulang...';
+  static const showMyLocation = 'Tampilkan lokasi saya';
+  static const turnOnGps = 'Nyalakan GPS';
+  static const recenter = 'Pusatkan peta';
+  static const passengerRationaleTitle = 'Tampilkan lokasi Anda';
+  static const passengerRationaleBody =
+      'KONEKTA memakai lokasi Anda untuk menampilkan posisi Anda di peta, dekat halte dan feeder. '
+      'Dari layar peta ini, lokasi Anda tidak dikirim ke server.';
 }

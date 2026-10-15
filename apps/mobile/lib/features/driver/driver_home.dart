@@ -11,6 +11,7 @@ import '../../core/theme/konekta_theme.dart';
 import '../../shared_widgets/loading_indicator.dart';
 import '../live_tracking/data/feeder_api.dart';
 import '../live_tracking/state/driver_duty_controller.dart';
+import '../live_tracking/ui/map_markers.dart';
 import '../live_tracking/ui/service_area_map.dart';
 
 class DriverHome extends StatefulWidget {
@@ -115,9 +116,9 @@ class _DriverHomeState extends State<DriverHome> {
                       if (_duty.lastLocation != null)
                         Marker(
                           point: LatLng(_duty.lastLocation!.lat, _duty.lastLocation!.lng),
-                          width: 44,
-                          height: 44,
-                          child: const _FeederMarker(),
+                          width: FeederMarker.size,
+                          height: FeederMarker.size,
+                          child: const FeederMarker(),
                         ),
                     ],
                   ),
@@ -205,22 +206,6 @@ class _DutyPanel extends StatelessWidget {
         DutyIssue.sendFailed => LiveTrackingStrings.sendFailed,
         DutyIssue.sessionExpired => LiveTrackingStrings.sessionExpired,
       };
-}
-
-class _FeederMarker extends StatelessWidget {
-  const _FeederMarker();
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      decoration: BoxDecoration(
-        color: AppColors.primary,
-        shape: BoxShape.circle,
-        border: Border.all(color: AppColors.onPrimary, width: 3),
-      ),
-      child: const Icon(Icons.directions_bus, color: AppColors.onPrimary, size: 22),
-    );
-  }
 }
 
 class _Message extends StatelessWidget {
