@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.bookings.dependencies import start_background, stop_background
 from app.db import close_pool, get_pool
-from app.routers import auth, bookings, consents, driver_stops, health
+from app.routers import auth, bookings, consents, driver_stops, feeders, health
 from app.websocket.manager import router as websocket_router
 
 
@@ -35,4 +35,5 @@ app.include_router(auth.router)
 app.include_router(bookings.router)
 app.include_router(consents.router)
 app.include_router(driver_stops.router)
+app.include_router(feeders.router)
 app.include_router(websocket_router)

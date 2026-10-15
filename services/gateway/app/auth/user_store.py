@@ -1,6 +1,8 @@
 # Postgres-backed user lookups for phone number + password auth.
 from typing import Optional
 
+import asyncpg
+
 from app.db import get_pool
 
 
@@ -13,9 +15,12 @@ async def get_user_by_phone(phone_number: str) -> Optional[dict]:
     return dict(row) if row else None
 
 
-async def create_user(phone_number: str, password_hash: str, role: str) -> dict:
-    pool = await get_pool()
-    row = await pool.fetchrow(
+async def create_user(
+    phone_number: str, password_hash: str, role: str, conn: Optional[asyncpg.Connection] = None
+) -> dict:
+    """Pass `conn` to create the user inside a caller's transaction."""
+    executor = conn if conn is not None else await get_pool()
+    row = await executor.fetchrow(
         """
         INSERT INTO users (phone_number, password_hash, role)
         VALUES ($1, $2, $3)

@@ -14,7 +14,8 @@ Shared working design for the two passenger-trip workstreams. Both owners read a
 | Device location `UserLocationProvider` (Flutter), location permission | **Live tracking** | see §5.3 |
 | Passenger shell (`PassengerMain`, navbar, tab scaffold), Map tab, Profile tab | **Live tracking** | `features/passenger/`, `shared_widgets/` (currently only on `feat/user-live-tracking`) |
 | Auth (sessions, roles, `require_role`) | merged (PR #1) — reuse, don't modify | `app/auth/`, `features/auth/` |
-| Driver app UI | **unowned** — see §11 | `features/driver/driver_home.dart` (placeholder) |
+| Driver app UI | **unowned** — see §11. Live tracking owns only the on-duty location sharing in it | `features/driver/driver_home.dart` |
+| Corridors/feeders, driver ↔ feeder binding, driver position reports | **Live tracking** | `app/feeders/`, `app/routers/feeders.py`, `005_feeders.sql`, `features/live_tracking/` |
 
 Rule: need a change in the other side's area → propose it here, don't edit their files.
 
@@ -139,6 +140,16 @@ Request to shell owner: `PassengerMain` passes the session into `HomeTab`/`Trips
 - `RoutingClient` → OSRM-compatible via `OSRM_BASE_URL` (`osrm-mock` by default).
 - Auth: `get_current_session` / `require_role` from `app/auth/dependencies.py`.
 
+### 5.8 Live tracking REST (gateway) — owned by live tracking
+- `GET /corridors` (public) → `{items: [{id, name, feeders: [{id, number, capacity, available}]}]}` — feeds the registration form.
+- `POST /auth/register` takes `feeder_id` (required for `driver`, rejected for `passenger`); the user and the feeder claim are one transaction. Taken/unknown feeder → 409 `"Feeder not available"`. **Deviation from §0** (auth is "reuse, don't modify"): agreed with the product owner so drivers pick their feeder on the same form.
+- `GET /feeders/me` (driver) → `{id, number, capacity, corridor_id, corridor_name}`; 404 `no_feeder_assigned`.
+- `POST /feeders/me/position` (driver) `{lat, lng, heading?, accuracy_m?}` → `{feeder_id, updated_at}`; stores in Redis and publishes `feeder.position` to `feeder:{id}` (§5.1). Errors (`{"detail": {"code"}}`): 409 `no_feeder_assigned`, 422 `outside_service_area` / `inaccurate_position` (> 100 m), 429 `too_frequent` (< 1 s).
+- `POST /feeders/me/offline` (driver) → 204; removes the feeder from the live set.
+- One feeder per driver (`feeders.driver_id UNIQUE`); `feeder_id` = `feeders.id` (e.g. `K1-03`), also the WS topic suffix. Corridors/feeders in `005_feeders.sql` are **placeholders**.
+- Redis: `feeders:geo` (GEO), `feeders:pos:<id>` (JSON `FeederPosition`, TTL 30 s = offline after 30 s without a report). No position history is persisted (§8). Service area = Bandung Raya, same box as `StubStopAssigner`.
+- Driver app reports every ~5 s while on duty via a foreground service (notification shown); REST rather than a WS message so §5.1 (client → server types) stays unchanged.
+
 ## 6. Booking API
 REST (all require `Authorization: Bearer <token>`, passenger role unless noted):
 - `POST /trip-plans` `{origin, destination, seats}` → `{plans: TripPlan[]}` (MVP returns one). Outside area / too short → 422 `no_route`. Routing down → 503 `routing_unavailable`. No consent → 403 `consent_required`.
@@ -181,7 +192,12 @@ Resolved:
 
 Open:
 - **Driver app UI owner** (`driver_home.dart`): calls §5.6. Simulator covers the demo until then.
-- **Live tracking:** confirm §5.2–§5.4 signatures and `feeder.position` payload.
+- **Live tracking:** §5.2–§5.4 implemented as specified (`UserLocation` adds optional `headingDeg`). Proposals for booking:
+  - Add `FEEDER_PROVIDER=redis` to `build_feeder_provider()` returning `app.feeders.dependencies.get_position_provider()`.
+  - `nearest(..., corridor_id)` filters strictly: stub stops use `corridor_id="stub-corridor"` while real feeders are on `K1`/`K2`, so matching finds no feeder until stops carry real corridor ids (or booking passes `None`).
+  - `POST /driver/stops/{id}/arrived|departed` can now resolve the caller's feeder from `feeders.driver_id` instead of trusting `feeder_id` in the body.
+  - A `feeder.offline` WS event when a driver ends duty (today subscribers just stop receiving positions).
+- **Driver location consent:** drivers see a purpose rationale before the OS prompt, but nothing is recorded in `consent_log`; decide whether a `driver_tracking` purpose is needed (UU PDP).
 - **Shell:** when `PassengerMain`/navbar lands on `main`, and the §5.5 session-passing change.
 - **Real halte/corridor data** for `StopAssigner` and seed.
 - **Suspended users mid-trip:** auth's `require_not_suspended` reads session `active_trip_id`, which booking does not set. Agree with auth whether that matters for MVP.
