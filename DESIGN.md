@@ -76,7 +76,7 @@ REQUESTED | MATCHING | CONFIRMED ─► EXPIRED   (timeout)
 **DB:** additive `00N_*.sql`, never edit earlier files. `004_bookings.sql` (booking): `stops`, `trip_plans`, `bookings`, `consent_log`. Live tracking adds its own migration if it persists anything. Migrations only run on a **fresh** Postgres volume (`docker-entrypoint-initdb.d`) — after pulling a new migration, `docker compose ... down -v` or apply it with `psql`.
 
 **Mobile** (`apps/mobile/lib/`), state management = plain `StatefulWidget` / `ChangeNotifier` (Flutter SDK). No third-party state library.
-- Booking: `features/booking/{domain,data,state,ui}/`.
+- Booking: `features/booking/{domain,data,state,ui}/`; Home/Trips tab files in `features/passenger/tabs/` only mount booking widgets.
 - Live tracking: `features/passenger/` shell + Map/Profile tabs, location + feeder stream under `core/` or its own feature folder.
 - Shared: `core/api/api_client.dart` (one HTTP client — extend, don't duplicate), `core/websocket/ws_client.dart` (one WS connection per app session, see §5.1), `core/strings/` (all Bahasa Indonesia strings), `core/theme/konekta_theme.dart`.
 
@@ -128,8 +128,11 @@ Single permission flow for the whole app; booking never requests location itself
 `Stream<FeederPosition> subscribe(String feederId)`, `FeederPosition? lastKnown(String feederId)`, over the shared WS (§5.1). Booking uses it for "feeder arriving" ETA on the Active Trip screen.
 
 ### 5.5 Passenger shell ↔ tab content
-Booking exposes widgets: `BookingHomeSection({required BookingSession session})` and `TripsView({required BookingSession session})`. `BookingSession` carries the auth token and the shared `ApiClient`/`WsClient`.
-Request to shell owner: `PassengerMain` passes the session into `HomeTab`/`TripsTab` (today the tabs are `const` and receive no token). Until the shell is on `main`, booking mounts its widgets in `main`'s `passenger_home.dart`.
+`PassengerMain` wraps its `KonektaTabScaffold` in `BookingScope(token:, child:)` (`features/booking/ui/booking_scope.dart`). The scope owns the per-login `BookingSession` (token, shared `ApiClient`, the app's single `WsClient`: connects it and disposes it on logout) and `BookingDependencies` (booking + history controllers shared by both tabs). Tabs stay `const` and read it with `BookingScope.of(context)`:
+- `HomeTab` → `BookingHomeSection(controller:, locations:)`
+- `TripsTab` → `TripsView(booking:, history:)`
+
+Other tabs (Map) get the shared WS via `BookingScope.of(context).session.wsClient`; don't open a second connection. Origin/destination come from `TripLocations` (`features/booking/data/trip_locations.dart`): `StubTripLocations` (placeholder points, labelled in the UI) until `UserLocationProvider` (§5.3) and a place search exist.
 
 ### 5.6 Driver stop events (gateway REST) — owned by booking, called by the driver app (unowned) or simulator
 `POST /driver/stops/{stop_id}/arrived` · `POST /driver/stops/{stop_id}/departed` — `require_role("driver")`, body `{feeder_id}`. Effects per §3. The live-tracking feed may also emit `arrived` automatically from geofencing later; same endpoint/effect.
@@ -182,7 +185,7 @@ Resolved:
 Open:
 - **Driver app UI owner** (`driver_home.dart`): calls §5.6. Simulator covers the demo until then.
 - **Live tracking:** confirm §5.2–§5.4 signatures and `feeder.position` payload.
-- **Shell:** when `PassengerMain`/navbar lands on `main`, and the §5.5 session-passing change.
+- **Shell:** confirm the `BookingScope` wrap in `PassengerMain` (§5.5) with the shell owner.
 - **Real halte/corridor data** for `StopAssigner` and seed.
 - **Suspended users mid-trip:** auth's `require_not_suspended` reads session `active_trip_id`, which booking does not set. Agree with auth whether that matters for MVP.
 - **Driver wait time** at a stop before departing: free choice for now; add a minimum if no-shows look unfair.
@@ -190,4 +193,4 @@ Open:
 ## 12. Repo facts
 - Flutter is not installed in every dev environment; state in PRs whether `flutter analyze`/`flutter test` ran.
 - `apps/mobile/android/` is committed (README says otherwise); manifest changes affect everyone.
-- Passenger shell exists only on `feat/user-live-tracking`; don't branch from it.
+- Passenger shell (`features/passenger/passenger_home.dart`, `tabs/`, `shared_widgets/konekta_*`) is on `dev`. Still don't branch from `feat/user-live-tracking`.
