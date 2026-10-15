@@ -10,10 +10,13 @@ from app.auth.passwords import hash_password, verify_password
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
+# Only mobile roles are self-registrable. "government" accounts (ops
+# dashboard) and "admin" are provisioned out of band, see
+# app/cli/create_user.py.
 class RegisterRequest(BaseModel):
     phone_number: str
     password: str
-    role: Literal["passenger", "driver", "government"]
+    role: Literal["passenger", "driver"]
 
 
 class LoginRequest(BaseModel):
@@ -24,6 +27,12 @@ class LoginRequest(BaseModel):
 class AuthResponse(BaseModel):
     token: str
     role: str
+
+
+class MeResponse(BaseModel):
+    user_id: str
+    role: str
+    status: str
 
 
 @router.post("/register", response_model=AuthResponse, status_code=status.HTTP_201_CREATED)
@@ -55,6 +64,11 @@ async def login(payload: LoginRequest) -> AuthResponse:
         )
     token = await session_store.create_session(str(user["id"]), user["role"])
     return AuthResponse(token=token, role=user["role"])
+
+
+@router.get("/me", response_model=MeResponse)
+async def me(session: dict = Depends(get_current_session)) -> MeResponse:
+    return MeResponse(user_id=session["user_id"], role=session["role"], status=session["status"])
 
 
 @router.post("/logout")

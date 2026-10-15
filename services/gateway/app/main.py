@@ -1,6 +1,8 @@
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from app.bookings.dependencies import start_background, stop_background
 from app.db import close_pool, get_pool
@@ -18,6 +20,15 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(title="KONEKTA Gateway", lifespan=lifespan)
+
+# The ops dashboard (apps/dashboard) calls the gateway from the browser.
+# Mobile clients aren't subject to CORS.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=os.getenv("CORS_ORIGINS", "http://localhost:5173").split(","),
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 app.include_router(health.router)
 app.include_router(auth.router)

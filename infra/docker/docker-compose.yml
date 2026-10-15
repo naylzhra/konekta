@@ -52,10 +52,12 @@ services:
       STUB_FEEDER_SUPPLY: ${STUB_FEEDER_SUPPLY:-1}
       # Demo-only driver simulator; set BOOKING_SIMULATOR=1 in your shell/.env to enable.
       BOOKING_SIMULATOR: ${BOOKING_SIMULATOR:-0}
+      CORS_ORIGINS: http://localhost:5173
     depends_on:
-      - postgres
-      - redis
-      - osrm-mock
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
 
   pooling-service:
     build:
@@ -67,9 +69,12 @@ services:
       REDIS_URL: redis://redis:6379/0
       OSRM_BASE_URL: http://osrm-mock:8000
     depends_on:
-      - postgres
-      - redis
-      - osrm-mock
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      osrm-mock:
+        condition: service_started
 
   stop-optimization-service:
     build:
@@ -80,8 +85,10 @@ services:
       DATABASE_URL: postgresql://konekta:konekta@postgres:5432/konekta
       REDIS_URL: redis://redis:6379/0
     depends_on:
-      - postgres
-      - redis
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
 
   forecasting-service:
     build:
@@ -91,7 +98,8 @@ services:
     environment:
       DATABASE_URL: postgresql://konekta:konekta@postgres:5432/konekta
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
 
 volumes:
   postgres_data:

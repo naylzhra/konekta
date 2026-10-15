@@ -93,99 +93,109 @@ class _LoginScreenState extends State<LoginScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      // Scrollable so the form doesn't overflow when the keyboard opens;
+      // SliverFillRemaining keeps the Spacer pushing the button to the
+      // bottom when there *is* room.
       body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(
-            horizontal: AppSpacing.containerMargin,
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              const SizedBox(height: AppSpacing.xl * 2),
-              const Center(
-                child: KonektaLogo(width: 200),
+        child: CustomScrollView(
+          slivers: [
+            SliverPadding(
+              padding: const EdgeInsets.symmetric(
+                horizontal: AppSpacing.containerMargin,
               ),
-              const SizedBox(height: AppSpacing.xl),
-              const Text('Nomor Telepon', style: AppTextStyles.bodyMd),
-              const SizedBox(height: AppSpacing.xs),
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Container(
-                    height: 52,
-                    padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
-                    alignment: Alignment.center,
-                    decoration: BoxDecoration(
-                      color: AppColors.inputFill,
-                      borderRadius: BorderRadius.circular(AppRadius.standard),
-                      border: Border.all(color: AppColors.inputFillBorder),
+              sliver: SliverFillRemaining(
+                hasScrollBody: false,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    const SizedBox(height: AppSpacing.xl * 2),
+                    const Center(
+                      child: KonektaLogo(width: 200),
                     ),
-                    child: const Text('+62', style: AppTextStyles.bodyMd),
-                  ),
-                  const SizedBox(width: AppSpacing.xs),
-                  Expanded(
-                    child: TextField(
-                      controller: _phoneController,
-                      focusNode: _phoneFocus,
-                      keyboardType: TextInputType.number,
-                      inputFormatters: [
-                        FilteringTextInputFormatter.digitsOnly,
-                        LengthLimitingTextInputFormatter(12),
-                      ],
-                      onChanged: (_) {
-                        if (_phoneError != null) setState(() => _phoneError = null);
-                      },
-                      decoration: InputDecoration(errorText: _phoneError),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: AppSpacing.xl),
-              const Text('Kata Sandi', style: AppTextStyles.bodyMd),
-              const SizedBox(height: AppSpacing.xs),
-              PasswordField(
-                controller: _passwordController,
-                focusNode: _passwordFocus,
-                onChanged: (_) {
-                  if (_passwordError != null) setState(() => _passwordError = null);
-                },
-                onSubmitted: (_) => _submit(),
-                errorText: _passwordError,
-              ),
-              if (_formError != null) ...[
-                const SizedBox(height: AppSpacing.sm),
-                Text(
-                  _formError!,
-                  style: AppTextStyles.bodySm.copyWith(color: AppColors.error),
-                ),
-              ],
-              const Spacer(),
-              ElevatedButton(
-                onPressed: _isSubmitting ? null : _submit,
-                child: Text(_isSubmitting ? 'Memuat...' : 'Masuk'),
-              ),
-              const SizedBox(height: AppSpacing.md),
-              Center(
-                child: RichText(
-                  text: TextSpan(
-                    style: AppTextStyles.bodyMd.copyWith(color: AppColors.onSurface),
-                    children: [
-                      const TextSpan(text: 'Belum punya akun? '),
-                      TextSpan(
-                        text: 'Daftar',
-                        style: const TextStyle(
-                          fontWeight: FontWeight.w700,
-                          decoration: TextDecoration.underline,
+                    const SizedBox(height: AppSpacing.xl),
+                    const Text('Nomor Telepon', style: AppTextStyles.bodyMd),
+                    const SizedBox(height: AppSpacing.xs),
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Container(
+                          height: 52,
+                          padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
+                          alignment: Alignment.center,
+                          decoration: BoxDecoration(
+                            color: AppColors.inputFill,
+                            borderRadius: BorderRadius.circular(AppRadius.standard),
+                            border: Border.all(color: AppColors.inputFillBorder),
+                          ),
+                          child: const Text('+62', style: AppTextStyles.bodyMd),
                         ),
-                        recognizer: _isSubmitting ? null : _registerTapRecognizer,
+                        const SizedBox(width: AppSpacing.xs),
+                        Expanded(
+                          child: TextField(
+                            controller: _phoneController,
+                            focusNode: _phoneFocus,
+                            keyboardType: TextInputType.number,
+                            inputFormatters: [
+                              FilteringTextInputFormatter.digitsOnly,
+                              LengthLimitingTextInputFormatter(12),
+                            ],
+                            onChanged: (_) {
+                              if (_phoneError != null) setState(() => _phoneError = null);
+                            },
+                            decoration: InputDecoration(errorText: _phoneError),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: AppSpacing.xl),
+                    const Text('Kata Sandi', style: AppTextStyles.bodyMd),
+                    const SizedBox(height: AppSpacing.xs),
+                    PasswordField(
+                      controller: _passwordController,
+                      focusNode: _passwordFocus,
+                      onChanged: (_) {
+                        if (_passwordError != null) setState(() => _passwordError = null);
+                      },
+                      onSubmitted: (_) => _submit(),
+                      errorText: _passwordError,
+                    ),
+                    if (_formError != null) ...[
+                      const SizedBox(height: AppSpacing.sm),
+                      Text(
+                        _formError!,
+                        style: AppTextStyles.bodySm.copyWith(color: AppColors.error),
                       ),
                     ],
-                  ),
+                    const Spacer(),
+                    ElevatedButton(
+                      onPressed: _isSubmitting ? null : _submit,
+                      child: Text(_isSubmitting ? 'Memuat...' : 'Masuk'),
+                    ),
+                    const SizedBox(height: AppSpacing.md),
+                    Center(
+                      child: RichText(
+                        text: TextSpan(
+                          style: AppTextStyles.bodyMd.copyWith(color: AppColors.onSurface),
+                          children: [
+                            const TextSpan(text: 'Belum punya akun? '),
+                            TextSpan(
+                              text: 'Daftar',
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w700,
+                                decoration: TextDecoration.underline,
+                              ),
+                              recognizer: _isSubmitting ? null : _registerTapRecognizer,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: AppSpacing.xl),
+                  ],
                 ),
               ),
-              const SizedBox(height: AppSpacing.xl),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );
