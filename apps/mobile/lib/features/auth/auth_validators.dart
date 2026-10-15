@@ -36,6 +36,8 @@ String friendlyAuthError(Object error) {
       'Phone number already registered': 'Nomor telepon sudah terdaftar',
       'Invalid phone number or password': 'Nomor telepon atau kata sandi salah',
       'Account suspended': 'Akun Anda ditangguhkan',
+      'Feeder not available': 'Feeder ini sudah dipakai pengemudi lain. Pilih feeder lain.',
+      'Feeder is required for drivers only': 'Pilih koridor dan feeder Anda',
       unsupportedRoleMessage:
           'Akun ini tidak dapat digunakan di aplikasi mobile. Silakan masuk melalui dashboard web.',
     };
