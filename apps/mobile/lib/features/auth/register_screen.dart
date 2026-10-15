@@ -172,7 +172,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 ],
               ),
               const SizedBox(height: AppSpacing.xl),
-              Expanded(child: _buildStep()),
+              Expanded(child: SingleChildScrollView(child: _buildStep())),
               if (_formError != null) ...[
                 Text(
                   _formError!,
