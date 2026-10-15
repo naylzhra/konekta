@@ -10,45 +10,161 @@ import '../domain/booking_models.dart';
 import '../state/booking_controller.dart';
 import 'active_booking_card.dart';
 import 'booking_widgets.dart';
+import 'home_widgets.dart';
 
-/// Home tab content (DESIGN.md §1): consent → destination → plan → confirm,
-/// then the active booking's live status.
+/// Home tab content: greeting, search, map preview, quick actions and pooling
+/// summary. Booking itself (consent -> destination -> plan -> confirm) lives in
+/// [_TripPlannerPage]; once a booking exists, its live status replaces the
+/// search and quick actions here (DESIGN.md §1).
 class BookingHomeSection extends StatelessWidget {
-  const BookingHomeSection({super.key, required this.controller, required this.locations});
+  const BookingHomeSection({
+    super.key,
+    required this.controller,
+    required this.locations,
+    this.onOpenMap,
+  });
 
   final BookingController controller;
   final TripLocations locations;
+
+  /// Switches to the Map tab (Route Info, locate button).
+  final VoidCallback? onOpenMap;
+
+  void _openPlanner(BuildContext context) {
+    Navigator.of(context)
+        .push<void>(
+          MaterialPageRoute(builder: (_) => _TripPlannerPage(controller: controller, locations: locations)),
+        )
+        // Drop unconfirmed plans so reopening starts clean.
+        .then((_) => controller.clearPlans());
+  }
 
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
       listenable: controller,
       builder: (context, _) {
-        final current = controller.current;
+        final hasBooking = controller.current != null;
         return ListView(
-          padding: const EdgeInsets.all(AppSpacing.containerMargin),
+          padding: const EdgeInsets.fromLTRB(
+            AppSpacing.containerMargin,
+            AppSpacing.lg,
+            AppSpacing.containerMargin,
+            AppSpacing.lg,
+          ),
           children: [
-            const Text(BookingStrings.homeTitle, style: AppTextStyles.headlineLg),
+            Text(
+              BookingStrings.homeTitle,
+              style: AppTextStyles.headlineLg.copyWith(
+                fontSize: 28,
+                height: 36 / 28,
+                fontWeight: FontWeight.w700,
+                color: AppColors.inverseSurface,
+              ),
+            ),
             const SizedBox(height: AppSpacing.base),
-            const Text(BookingStrings.homeSubtitle, style: AppTextStyles.bodySm),
+            const Text(BookingStrings.homeSubtitle, style: AppTextStyles.bodyMd),
             const SizedBox(height: AppSpacing.lg),
-            // Always one child, so toggling connectivity doesn't shift the
-            // planner's position and reset its state (query, destination).
-            controller.isOnline
-                ? const SizedBox.shrink()
-                : const Padding(
-                    padding: EdgeInsets.only(bottom: AppSpacing.sm),
-                    child: BookingNotice(icon: Icons.cloud_off, message: BookingStrings.offline),
-                  ),
-            if (current != null)
+            if (!controller.isOnline) ...[
+              const BookingNotice(icon: Icons.cloud_off, message: BookingStrings.offline),
+              const SizedBox(height: AppSpacing.sm),
+            ],
+            if (!hasBooking) ...[
+              HomeSearchBar(onTap: () => _openPlanner(context)),
+              const SizedBox(height: AppSpacing.md),
+            ],
+            HomeMapHero(nearbyFeeders: HomeStats.nearbyFeeders, onLocate: onOpenMap),
+            const SizedBox(height: AppSpacing.md),
+            if (hasBooking)
               ActiveBookingCard(controller: controller)
-            else if (controller.consent == ConsentState.required)
-              _ConsentCard(controller: controller)
             else
-              _TripPlanner(controller: controller, locations: locations),
+              // Fixed height: `stretch` needs a bounded height inside a ListView.
+              SizedBox(
+                height: 148,
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Expanded(
+                      child: HomeActionCard(
+                        icon: Icons.directions_car_filled_outlined,
+                        label: BookingStrings.bookFeeder,
+                        filled: true,
+                        onTap: () => _openPlanner(context),
+                      ),
+                    ),
+                    const SizedBox(width: AppSpacing.md),
+                    Expanded(
+                      child: HomeActionCard(
+                        icon: Icons.route,
+                        label: BookingStrings.routeInfo,
+                        onTap: onOpenMap,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            const SizedBox(height: AppSpacing.md),
+            HomePoolingCard(activeVirtualStops: HomeStats.activeVirtualStops),
           ],
         );
       },
+    );
+  }
+}
+
+/// Full-screen booking flow. Closes itself once a booking exists so Home shows
+/// its live status.
+class _TripPlannerPage extends StatefulWidget {
+  const _TripPlannerPage({required this.controller, required this.locations});
+
+  final BookingController controller;
+  final TripLocations locations;
+
+  @override
+  State<_TripPlannerPage> createState() => _TripPlannerPageState();
+}
+
+class _TripPlannerPageState extends State<_TripPlannerPage> {
+  bool _closing = false;
+
+  void _closeOnce() {
+    if (_closing) return;
+    _closing = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) Navigator.of(context).maybePop();
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final controller = widget.controller;
+    return Scaffold(
+      appBar: AppBar(title: const Text(BookingStrings.plannerTitle, style: AppTextStyles.headlineMd)),
+      body: SafeArea(
+        child: ListenableBuilder(
+          listenable: controller,
+          builder: (context, _) {
+            if (controller.current != null) _closeOnce();
+            return ListView(
+              padding: const EdgeInsets.all(AppSpacing.containerMargin),
+              children: [
+                // Always one child, so toggling connectivity doesn't shift the
+                // planner's position and reset its state (query, destination).
+                controller.isOnline
+                    ? const SizedBox.shrink()
+                    : const Padding(
+                        padding: EdgeInsets.only(bottom: AppSpacing.sm),
+                        child: BookingNotice(icon: Icons.cloud_off, message: BookingStrings.offline),
+                      ),
+                if (controller.consent == ConsentState.required)
+                  _ConsentCard(controller: controller)
+                else
+                  _TripPlanner(controller: controller, locations: widget.locations),
+              ],
+            );
+          },
+        ),
+      ),
     );
   }
 }
@@ -368,7 +484,8 @@ class _PlanCardState extends State<_PlanCard> {
             ),
           if (pickup != null && dropoff != null) const SizedBox(height: AppSpacing.sm),
           if (dropoff != null)
-            StopRow(label: BookingStrings.dropoffStop, name: dropoff.name, type: dropoff.type, icon: Icons.flag_outlined),
+            StopRow(
+                label: BookingStrings.dropoffStop, name: dropoff.name, type: dropoff.type, icon: Icons.flag_outlined),
           const SizedBox(height: AppSpacing.sm),
           InfoRow(label: BookingStrings.fare, value: BookingStrings.rupiah(plan.fareEstimateIdr)),
           InfoRow(label: BookingStrings.travelTime, value: BookingStrings.minutes(plan.etaMinutes)),
@@ -380,7 +497,9 @@ class _PlanCardState extends State<_PlanCard> {
             ),
           const SizedBox(height: AppSpacing.base),
           Text(
-            expired ? BookingStrings.planExpiredHint : BookingStrings.planValidUntil(BookingStrings.time(plan.expiresAt)),
+            expired
+                ? BookingStrings.planExpiredHint
+                : BookingStrings.planValidUntil(BookingStrings.time(plan.expiresAt)),
             style: AppTextStyles.bodySm.copyWith(color: expired ? AppColors.error : null),
           ),
           if (error != null) ...[

@@ -8,7 +8,20 @@ class BookingStrings {
 
   // Home
   static const homeTitle = 'Siap berangkat?';
-  static const homeSubtitle = 'Pilih tujuan, kami carikan titik jemput dan feeder terdekat.';
+  static const homeSubtitle = 'Mau ke mana hari ini?';
+  static const homeSearchHint = 'Mau ke mana?';
+  static const bookFeeder = 'Pesan\nFeeder';
+  static const routeInfo = 'Info\nRute';
+  static const locate = 'Lokasi saya';
+  static const plannerTitle = 'Pesan feeder';
+  static String feedersNearby(int count) => '$count FEEDER TERDEKAT';
+
+  // Pooling
+  static const poolingTitle = 'Pooling saat ini';
+  static const poolingActive = 'AKTIF';
+  static String poolingSummary(int count) => '$count titik virtual aktif di sekitarmu.';
+  static const poolingSummaryGeneric = 'Titik virtual muncul mengikuti permintaan di sekitarmu.';
+  static const poolingJoin = 'Gabung pool agar jemputan lebih cepat';
   static const origin = 'Dari';
   static const destination = 'Ke';
   static const currentLocation = 'Lokasi saat ini';

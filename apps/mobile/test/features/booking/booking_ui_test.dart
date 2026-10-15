@@ -39,12 +39,20 @@ void main() {
   Future<void> pumpHome(WidgetTester tester) =>
       pump(tester, BookingHomeSection(controller: controller, locations: const StubTripLocations()));
 
+  // The planner is its own route, opened from the Home search bar.
+  Future<void> openPlanner(WidgetTester tester) async {
+    await tester.tap(find.text(BookingStrings.homeSearchHint));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500)); // route transition
+  }
+
   // Disposes widgets so timers (plan expiry) don't outlive the test.
   Future<void> unmount(WidgetTester tester) => tester.pumpWidget(const SizedBox());
 
   group('Home', () {
     testWidgets('asks for consent first, then shows the planner', (tester) async {
       await pumpHome(tester);
+      await openPlanner(tester);
       expect(find.text(BookingStrings.consentTitle), findsOneWidget);
 
       await tester.tap(find.text(BookingStrings.consentAccept));
@@ -63,6 +71,7 @@ void main() {
       final created = Completer<Booking>();
       repo.onCreate = (_, __) => created.future;
       await pumpHome(tester);
+      await openPlanner(tester);
 
       await tester.tap(find.text(StubTripLocations.places.first.name));
       await tester.pump();
@@ -77,6 +86,7 @@ void main() {
 
       created.complete(booking(status: BookingStatus.requested));
       await tester.pump();
+      await tester.pump(const Duration(milliseconds: 500)); // planner closes, Home shows the booking
 
       expect(repo.createKeys, hasLength(1));
       expect(find.text(BookingStrings.statusLabel(BookingStatus.requested)), findsOneWidget);
@@ -87,6 +97,7 @@ void main() {
       await repo.recordConsent(granted: true);
       repo.onPlan = () async => throw failure(BookingFailureCode.noRoute);
       await pumpHome(tester);
+      await openPlanner(tester);
 
       await tester.tap(find.text(StubTripLocations.places.first.name));
       await tester.pump();
