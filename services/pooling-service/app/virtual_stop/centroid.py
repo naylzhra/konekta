@@ -1,22 +1,32 @@
+"""Demand-weighted centroid of a cluster (DESIGN.md §13.4).
+
+Each request weighs `seats × 0.5^(age_days / half_life)`, so recent demand
+pulls the stop harder than old demand. Snapping the result onto the road
+network happens afterwards via OSRM `/nearest` (app/osrm_client.py).
 """
-Weighted centroid computation for virtual stop placement.
+from datetime import datetime
+from typing import Optional
 
-TODO: implement demand-weighted centroid + snap-to-road (via
-app/osrm_client.py) so the centroid lands on a driveable road segment
-instead of floating in the middle of a block. Placeholder only.
-"""
+from app.geo import LocalProjection
+from app.models import GeoPoint
+
+SECONDS_PER_DAY = 86_400
 
 
-def weighted_centroid(points_with_weights: list[tuple[tuple[float, float], float]]):
-    """
-    points_with_weights: list of ((lat, lon), weight) tuples.
-    Returns (lat, lon) of the weighted centroid, or None if empty.
-    """
-    if not points_with_weights:
-        return None
+def recency_weight(seats: int, requested_at: datetime, reference: datetime, half_life_days: float) -> float:
+    age_days = max(0.0, (reference - requested_at).total_seconds() / SECONDS_PER_DAY)
+    return seats * 0.5 ** (age_days / half_life_days)
+
+
+def weighted_centroid(points_with_weights: list[tuple[GeoPoint, float]]) -> Optional[GeoPoint]:
+    """None for no points or zero total weight."""
     total_weight = sum(weight for _, weight in points_with_weights)
-    if total_weight == 0:
+    if not points_with_weights or total_weight <= 0:
         return None
-    lat = sum(point[0] * weight for point, weight in points_with_weights) / total_weight
-    lon = sum(point[1] * weight for point, weight in points_with_weights) / total_weight
-    return lat, lon
+    projection = LocalProjection(points_with_weights[0][0])
+    x = y = 0.0
+    for point, weight in points_with_weights:
+        px, py = projection.to_xy(point)
+        x += px * weight
+        y += py * weight
+    return projection.to_point(x / total_weight, y / total_weight)
