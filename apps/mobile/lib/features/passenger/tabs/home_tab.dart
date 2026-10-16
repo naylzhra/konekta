@@ -1,39 +1,29 @@
 import 'package:flutter/material.dart';
 
-import '../../../core/api/api_client.dart';
-import '../../../core/theme/konekta_theme.dart';
+import '../../../shared_widgets/konekta_tab_scaffold.dart';
+import '../../booking/ui/booking_home_section.dart';
+import '../../booking/ui/booking_scope.dart';
+import '../../live_tracking/state/feeder_fleet_controller.dart';
+import '../../live_tracking/state/passenger_map_controller.dart';
+import 'home_map_preview.dart';
 
-// TODO: replace with real passenger home
-class HomeTab extends StatefulWidget {
-  const HomeTab({super.key});
+class HomeTab extends StatelessWidget {
+  const HomeTab({super.key, required this.map, required this.fleet});
 
-  @override
-  State<HomeTab> createState() => _HomeTabState();
-}
+  final PassengerMapController map;
+  final FeederFleetController fleet;
 
-class _HomeTabState extends State<HomeTab> {
-  final _apiClient = ApiClient();
-  String _status = 'checking gateway...';
-
-  @override
-  void initState() {
-    super.initState();
-    _checkGateway();
-  }
-
-  Future<void> _checkGateway() async {
-    try {
-      final health = await _apiClient.checkHealth();
-      if (!mounted) return;
-      setState(() => _status = 'gateway: ${health['status']}');
-    } catch (_) {
-      if (!mounted) return;
-      setState(() => _status = 'gateway unreachable');
-    }
-  }
+  /// Index of the Map tab in [PassengerMain].
+  static const _mapTabIndex = 2;
 
   @override
   Widget build(BuildContext context) {
-    return Center(child: Text(_status, style: AppTextStyles.bodyMd));
+    final scope = BookingScope.of(context);
+    return BookingHomeSection(
+      controller: scope.dependencies.booking,
+      locations: scope.locations,
+      onOpenMap: () => KonektaTabs.maybeOf(context)?.select(_mapTabIndex),
+      mapPreview: HomeMapPreview(controller: map, fleet: fleet),
+    );
   }
 }

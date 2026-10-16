@@ -1,12 +1,18 @@
 import 'package:flutter/material.dart';
 
+import '../../core/location/user_location_provider.dart';
 import '../../shared_widgets/konekta_navbar.dart';
 import '../../shared_widgets/konekta_tab_scaffold.dart';
+import '../booking/ui/booking_scope.dart';
+import '../live_tracking/data/feeder_api.dart';
+import '../live_tracking/data/feeder_position_stream.dart';
+import '../live_tracking/state/feeder_fleet_controller.dart';
+import '../live_tracking/state/passenger_map_controller.dart';
+import 'booking_active_trip.dart';
 import 'tabs/home_tab.dart';
 import 'tabs/map_tab.dart';
 import 'tabs/profile_tab.dart';
 import 'tabs/trips_tab.dart';
-
 
 class PassengerMain extends StatelessWidget {
   const PassengerMain({super.key, required this.token});
@@ -15,8 +21,61 @@ class PassengerMain extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const KonektaTabScaffold(
-      items: [
+    return BookingScope(token: token, child: const _PassengerTabs());
+  }
+}
+
+class _PassengerTabs extends StatefulWidget {
+  const _PassengerTabs();
+
+  @override
+  State<_PassengerTabs> createState() => _PassengerTabsState();
+}
+
+class _PassengerTabsState extends State<_PassengerTabs> {
+  WsFeederPositionStream? _feederPositions;
+  BookingActiveTrip? _activeTrip;
+  PassengerMapController? _map;
+  FeederFleetController? _fleet;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_map != null) return;
+    final scope = BookingScope.of(context);
+    final wsClient = scope.session.wsClient;
+    final feederPositions = _feederPositions = WsFeederPositionStream(wsClient);
+    final activeTrip = _activeTrip = BookingActiveTrip(scope.dependencies.booking);
+    _map = PassengerMapController(
+      trip: activeTrip,
+      positions: feederPositions,
+      location: GeolocatorUserLocationProvider(),
+      connection: wsClient.states,
+      initialConnection: wsClient.state,
+    )..start();
+    final feederApi = FeederApi(scope.session.apiClient);
+    final token = scope.session.token;
+    _fleet = FeederFleetController(
+      loadCorridors: feederApi.listCorridors,
+      loadLive: () => feederApi.liveFeeders(token),
+      positions: feederPositions,
+      connection: wsClient.states,
+    )..start();
+  }
+
+  @override
+  void dispose() {
+    _fleet?.dispose();
+    _map?.dispose();
+    _activeTrip?.dispose();
+    _feederPositions?.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return KonektaTabScaffold(
+      items: const [
         KonektaNavItem(icon: Icons.home_outlined, selectedIcon: Icons.home, label: 'Home'),
         KonektaNavItem(
           icon: Icons.directions_bus_outlined,
@@ -26,7 +85,12 @@ class PassengerMain extends StatelessWidget {
         KonektaNavItem(icon: Icons.map_outlined, selectedIcon: Icons.map, label: 'Map'),
         KonektaNavItem(icon: Icons.person_outline, selectedIcon: Icons.person, label: 'Profile'),
       ],
-      tabs: [HomeTab(), TripsTab(), MapTab(), ProfileTab()],
+      tabs: [
+        HomeTab(map: _map!, fleet: _fleet!),
+        const TripsTab(),
+        MapTab(controller: _map!, fleet: _fleet!),
+        const ProfileTab(),
+      ],
     );
   }
 }

@@ -33,7 +33,6 @@ class AuthException implements Exception {
   String toString() => message;
 }
 
-final _sharedHttpClient = http.Client();
 const _requestTimeout = Duration(seconds: 10);
 
 /// Response of [ApiClient.send]: status code plus the decoded JSON body
@@ -61,9 +60,13 @@ class ApiTransportException implements Exception {
 }
 
 
-/// TODO: move base URL to build-time config
+/// Gateway URL, overridable at build time for physical devices:
+/// `flutter run --dart-define=API_BASE_URL=http://<host-lan-ip>:8000`.
+/// The default is the Android emulator's alias for the host's localhost.
+const defaultApiBaseUrl = String.fromEnvironment('API_BASE_URL', defaultValue: 'http://10.0.2.2:8000');
+
 class ApiClient {
-  ApiClient({this.baseUrl = 'http://10.0.2.2:8000', http.Client? httpClient})
+  ApiClient({this.baseUrl = defaultApiBaseUrl, http.Client? httpClient})
       : _http = httpClient ?? http.Client();
 
   final String baseUrl;
@@ -120,11 +123,11 @@ class ApiClient {
   }
 
 
-  /// TODO: different form data specific to the roles
   Future<AuthResult> register({
     required String phoneNumber,
     required String password,
     required String role,
+    String? feederId,
   }) async {
     final response = await _http.post(
       Uri.parse('$baseUrl/auth/register'),
@@ -133,6 +136,7 @@ class ApiClient {
         'phone_number': phoneNumber,
         'password': password,
         'role': role,
+        if (feederId != null) 'feeder_id': feederId,
       }),
     ).timeout(_requestTimeout);
     return _parseAuthResponse(response);

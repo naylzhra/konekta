@@ -14,7 +14,8 @@ Shared working design for the two passenger-trip workstreams. Both owners read a
 | Device location `UserLocationProvider` (Flutter), location permission | **Live tracking** | see §5.3 |
 | Passenger shell (`PassengerMain`, navbar, tab scaffold), Map tab, Profile tab | **Live tracking** | `features/passenger/`, `shared_widgets/` (currently only on `feat/user-live-tracking`) |
 | Auth (sessions, roles, `require_role`) | merged (PR #1) — reuse, don't modify | `app/auth/`, `features/auth/` |
-| Driver app UI | **unowned** — see §11 | `features/driver/driver_home.dart` (placeholder) |
+| Driver app UI | **unowned** — see §11. Live tracking owns only the on-duty location sharing in it | `features/driver/driver_home.dart` |
+| Corridors/feeders, driver ↔ feeder binding, driver position reports | **Live tracking** | `app/feeders/`, `app/routers/feeders.py`, `005_feeders.sql`, `features/live_tracking/` |
 
 Rule: need a change in the other side's area → propose it here, don't edit their files.
 
@@ -76,7 +77,7 @@ REQUESTED | MATCHING | CONFIRMED ─► EXPIRED   (timeout)
 **DB:** additive `00N_*.sql`, never edit earlier files. `004_bookings.sql` (booking): `stops`, `trip_plans`, `bookings`, `consent_log`. Live tracking adds its own migration if it persists anything. Migrations only run on a **fresh** Postgres volume (`docker-entrypoint-initdb.d`) — after pulling a new migration, `docker compose ... down -v` or apply it with `psql`.
 
 **Mobile** (`apps/mobile/lib/`), state management = plain `StatefulWidget` / `ChangeNotifier` (Flutter SDK). No third-party state library.
-- Booking: `features/booking/{domain,data,state,ui}/`.
+- Booking: `features/booking/{domain,data,state,ui}/`; Home/Trips tab files in `features/passenger/tabs/` only mount booking widgets.
 - Live tracking: `features/passenger/` shell + Map/Profile tabs, location + feeder stream under `core/` or its own feature folder.
 - Shared: `core/api/api_client.dart` (one HTTP client — extend, don't duplicate), `core/websocket/ws_client.dart` (one WS connection per app session, see §5.1), `core/strings/` (all Bahasa Indonesia strings), `core/theme/konekta_theme.dart`.
 
@@ -128,8 +129,11 @@ Single permission flow for the whole app; booking never requests location itself
 `Stream<FeederPosition> subscribe(String feederId)`, `FeederPosition? lastKnown(String feederId)`, over the shared WS (§5.1). Booking uses it for "feeder arriving" ETA on the Active Trip screen.
 
 ### 5.5 Passenger shell ↔ tab content
-Booking exposes widgets: `BookingHomeSection({required BookingSession session})` and `TripsView({required BookingSession session})`. `BookingSession` carries the auth token and the shared `ApiClient`/`WsClient`.
-Request to shell owner: `PassengerMain` passes the session into `HomeTab`/`TripsTab` (today the tabs are `const` and receive no token). Until the shell is on `main`, booking mounts its widgets in `main`'s `passenger_home.dart`.
+`PassengerMain` wraps its `KonektaTabScaffold` in `BookingScope(token:, child:)` (`features/booking/ui/booking_scope.dart`). The scope owns the per-login `BookingSession` (token, shared `ApiClient`, the app's single `WsClient`: connects it and disposes it on logout) and `BookingDependencies` (booking + history controllers shared by both tabs). Tabs stay `const` and read it with `BookingScope.of(context)`:
+- `HomeTab` → `BookingHomeSection(controller:, locations:)`
+- `TripsTab` → `TripsView(booking:, history:)`
+
+Other tabs (Map) get the shared WS via `BookingScope.of(context).session.wsClient`; don't open a second connection. Origin/destination come from `TripLocations` (`features/booking/data/trip_locations.dart`): `StubTripLocations` (placeholder points, labelled in the UI) until `UserLocationProvider` (§5.3) and a place search exist.
 
 ### 5.6 Driver stop events (gateway REST) — owned by booking, called by the driver app (unowned) or simulator
 `POST /driver/stops/{stop_id}/arrived` · `POST /driver/stops/{stop_id}/departed` — `require_role("driver")`, body `{feeder_id}`. Effects per §3. The live-tracking feed may also emit `arrived` automatically from geofencing later; same endpoint/effect.
@@ -138,6 +142,35 @@ Request to shell owner: `PassengerMain` passes the session into `HomeTab`/`Trips
 - `StopAssigner` → pooling-service / stop-optimization-service: `assign_pickup_stop(request) -> Stop | None`. `StubStopAssigner` (`STOP_ASSIGNER=stub`) uses a small, clearly labelled placeholder stop list (no real halte data yet). Real HTTP client goes behind the same interface; don't implement logic inside those services.
 - `RoutingClient` → OSRM-compatible via `OSRM_BASE_URL` (`osrm-mock` by default).
 - Auth: `get_current_session` / `require_role` from `app/auth/dependencies.py`.
+
+### 5.8 Live tracking REST (gateway) — owned by live tracking
+- `GET /corridors` (public) → `{items: [{id, name, feeders: [{id, number, capacity, available}]}]}` — feeds the registration form.
+- `POST /auth/register` takes `feeder_id` (required for `driver`, rejected for `passenger`); the user and the feeder claim are one transaction. Taken/unknown feeder → 409 `"Feeder not available"`. **Deviation from §0** (auth is "reuse, don't modify"): agreed with the product owner so drivers pick their feeder on the same form.
+- `GET /feeders/me` (driver) → `{id, number, capacity, corridor_id, corridor_name}`; 404 `no_feeder_assigned`.
+- `POST /feeders/me/position` (driver) `{lat, lng, heading?, accuracy_m?}` → `{feeder_id, updated_at}`; stores in Redis and publishes `feeder.position` to `feeder:{id}` (§5.1). Errors (`{"detail": {"code"}}`): 409 `no_feeder_assigned`, 422 `outside_service_area` / `inaccurate_position` (> 100 m), 429 `too_frequent` (< 1 s).
+- `POST /feeders/me/offline` (driver) → 204; removes the feeder from the live set.
+- One feeder per driver (`feeders.driver_id UNIQUE`); `feeder_id` = `feeders.id` (e.g. `K1-03`), also the WS topic suffix. Corridors/feeders in `005_feeders.sql` are **placeholders**.
+- Redis: `feeders:geo` (GEO), `feeders:pos:<id>` (JSON `FeederPosition`, TTL 30 s = offline after 30 s without a report). No position history is persisted (§8). Service area = Bandung Raya, same box as `StubStopAssigner`.
+- Driver app reports every ~5 s while on duty via a foreground service (notification shown); REST rather than a WS message so §5.1 (client → server types) stays unchanged.
+
+### 5.9 Live tracking ↔ booking — what each side relies on
+Changes by live tracking that touch booking, and what live tracking needs from booking. Booking owner: please confirm or push back here.
+
+**Done by live tracking on `feat/user-live-tracking` (booking files untouched):**
+- `PassengerMain` (shell) owns the passenger session: creates `BookingSession.create(token)` and one `BookingDependencies.create(session)`, calls `wsClient.connect()` and `booking.start()`, and disposes all of them. §5.5 says "whoever creates the session owns the WsClient", so this makes the shell that owner.
+- The Map tab reads `BookingController` through `features/passenger/booking_active_trip.dart`. Fields it depends on (please don't rename without a note here): `current`, `Booking.isActive`, `Booking.feederId`, `Booking.pickupStop` (`name`, `location`), `Booking.status == BookingStatus.boarded`, and `pickupStopUpdate.location` (virtual stop moved).
+- The Map tab subscribes to `feeder:<booking.feeder_id>` via `FeederPositionStream` while the booking is active, and unsubscribes when `feeder_id` changes or the booking ends.
+
+**Requests to booking:**
+1. **One `BookingController` per session:** `BookingHomeSection`/`TripsView` take the shell's `BookingDependencies` instead of building their own from the session (otherwise there are two controllers and two `GET /bookings/active` resyncs).
+2. **Real feeder matching:** add `FEEDER_PROVIDER=redis` to `build_feeder_provider()`, returning `app.feeders.dependencies.get_position_provider()`. Until then bookings never get a `feeder_id` and the Map tab stays on "Mencari feeder...".
+3. **Corridor ids:** `nearest(..., corridor_id)` filters strictly, but stub stops use `corridor_id="stub-corridor"` while real feeders are on `K1`/`K2`. Either give stub stops real corridor ids or pass `corridor_id=None` until real halte data exists.
+4. **Driver stop events:** `POST /driver/stops/{id}/arrived|departed` can resolve the caller's feeder from `feeders.driver_id` instead of trusting `feeder_id` in the body (TODO in `routers/driver_stops.py`).
+
+**Planned by live tracking, needs booking data:**
+- **WS topic authorization** (TODO in `websocket/manager.py`): a passenger may subscribe only to `feeder:<id>` of their own active booking; a driver only to their own feeder; government to all. Live tracking will read the active booking's `feeder_id` from the bookings table (read-only) unless booking prefers to expose a helper for it.
+- **`feeder.offline` WS event** when a driver ends duty or the position expires (today subscribers just stop receiving positions). New server → client type for §5.1.
+- **Automatic `arrived`** from geofencing the feeder's position against the pickup stop (§5.6): same endpoint/effect as the manual event.
 
 ## 6. Booking API
 REST (all require `Authorization: Bearer <token>`, passenger role unless noted):
@@ -181,8 +214,9 @@ Resolved:
 
 Open:
 - **Driver app UI owner** (`driver_home.dart`): calls §5.6. Simulator covers the demo until then.
-- **Live tracking:** confirm §5.2–§5.4 signatures and `feeder.position` payload.
-- **Shell:** when `PassengerMain`/navbar lands on `main`, and the §5.5 session-passing change.
+- **Live tracking:** §5.2–§5.4 implemented as specified (`UserLocation` adds optional `headingDeg`). Requests to booking and planned work that needs booking data: see §5.9.
+- **Driver location consent:** drivers see a purpose rationale before the OS prompt, but nothing is recorded in `consent_log`; decide whether a `driver_tracking` purpose is needed (UU PDP).
+- **Shell:** confirm the `BookingScope` wrap in `PassengerMain` (§5.5) with the shell owner (shell now owns the session on `feat/user-live-tracking`, see §5.9).
 - **Real halte/corridor data** for `StopAssigner` and seed.
 - **Suspended users mid-trip:** auth's `require_not_suspended` reads session `active_trip_id`, which booking does not set. Agree with auth whether that matters for MVP.
 - **Driver wait time** at a stop before departing: free choice for now; add a minimum if no-shows look unfair.
@@ -190,4 +224,4 @@ Open:
 ## 12. Repo facts
 - Flutter is not installed in every dev environment; state in PRs whether `flutter analyze`/`flutter test` ran.
 - `apps/mobile/android/` is committed (README says otherwise); manifest changes affect everyone.
-- Passenger shell exists only on `feat/user-live-tracking`; don't branch from it.
+- Passenger shell (`features/passenger/passenger_home.dart`, `tabs/`, `shared_widgets/konekta_*`) is on `dev`. Still don't branch from `feat/user-live-tracking`.
