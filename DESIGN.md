@@ -95,10 +95,10 @@ Server → client:
 |---|---|---|---|
 | `booking.updated` | booking | full `Booking` snapshot (incl. `version`) | to the booking's user |
 | `stop.updated` | booking | `{stop_id, location, valid_until}` | to users with an active booking at that stop |
-| `feeder.position` | live tracking | `{feeder_id, lat, lng, heading, occupancy, updated_at}` | to subscribers of `feeder:{id}` |
+| `feeder.position` | live tracking | `{feeder_id, lat, lng, heading, occupancy, capacity, corridor_id, updated_at}` | to subscribers of `feeder:{id}` and `corridor:{corridor_id}` |
 | `error` | hub | `{code, message}` | to the sender |
 
-Client → server: `{"type":"subscribe","payload":{"topic":"feeder:<id>"}}`, `{"type":"unsubscribe",...}`, `{"type":"ping"}`.
+Client → server: `{"type":"subscribe","payload":{"topic":"feeder:<id>"}}` (or `corridor:<id>`), `{"type":"unsubscribe",...}`, `{"type":"ping"}`.
 
 Gateway hub API (in `manager.py`): `send_to_user(user_id, type, payload)`, `publish(topic, type, payload)`, subscription handling. Each workstream only calls these; neither adds a second WS endpoint.
 
@@ -144,10 +144,11 @@ Other tabs (Map) get the shared WS via `BookingScope.of(context).session.wsClien
 - Auth: `get_current_session` / `require_role` from `app/auth/dependencies.py`.
 
 ### 5.8 Live tracking REST (gateway) — owned by live tracking
-- `GET /corridors` (public) → `{items: [{id, name, feeders: [{id, number, capacity, available}]}]}` — feeds the registration form.
+- `GET /corridors` (public) → `{items: [{id, name, feeders: [{id, number, capacity, available}]}]}` — feeds the registration form and the passenger map's route search (corridors stand in for routes until route geometry exists).
+- `GET /feeders/live?corridor_id=` (any signed-in role) → `{items: [<feeder.position payload>]}` — every feeder on duty (unexpired Redis position); the passenger map's snapshot before following `corridor:{id}`.
 - `POST /auth/register` takes `feeder_id` (required for `driver`, rejected for `passenger`); the user and the feeder claim are one transaction. Taken/unknown feeder → 409 `"Feeder not available"`. **Deviation from §0** (auth is "reuse, don't modify"): agreed with the product owner so drivers pick their feeder on the same form.
 - `GET /feeders/me` (driver) → `{id, number, capacity, corridor_id, corridor_name}`; 404 `no_feeder_assigned`.
-- `POST /feeders/me/position` (driver) `{lat, lng, heading?, accuracy_m?}` → `{feeder_id, updated_at}`; stores in Redis and publishes `feeder.position` to `feeder:{id}` (§5.1). Errors (`{"detail": {"code"}}`): 409 `no_feeder_assigned`, 422 `outside_service_area` / `inaccurate_position` (> 100 m), 429 `too_frequent` (< 1 s).
+- `POST /feeders/me/position` (driver) `{lat, lng, heading?, accuracy_m?}` → `{feeder_id, updated_at}`; stores in Redis and publishes `feeder.position` to `feeder:{id}` and `corridor:{corridor_id}` (§5.1). Errors (`{"detail": {"code"}}`): 409 `no_feeder_assigned`, 422 `outside_service_area` / `inaccurate_position` (> 100 m), 429 `too_frequent` (< 1 s).
 - `POST /feeders/me/offline` (driver) → 204; removes the feeder from the live set.
 - One feeder per driver (`feeders.driver_id UNIQUE`); `feeder_id` = `feeders.id` (e.g. `K1-03`), also the WS topic suffix. Corridors/feeders in `005_feeders.sql` are **placeholders**.
 - Redis: `feeders:geo` (GEO), `feeders:pos:<id>` (JSON `FeederPosition`, TTL 30 s = offline after 30 s without a report). No position history is persisted (§8). Service area = Bandung Raya, same box as `StubStopAssigner`.
@@ -168,7 +169,7 @@ Changes by live tracking that touch booking, and what live tracking needs from b
 4. **Driver stop events:** `POST /driver/stops/{id}/arrived|departed` can resolve the caller's feeder from `feeders.driver_id` instead of trusting `feeder_id` in the body (TODO in `routers/driver_stops.py`).
 
 **Planned by live tracking, needs booking data:**
-- **WS topic authorization** (TODO in `websocket/manager.py`): a passenger may subscribe only to `feeder:<id>` of their own active booking; a driver only to their own feeder; government to all. Live tracking will read the active booking's `feeder_id` from the bookings table (read-only) unless booking prefers to expose a helper for it.
+- **WS topic authorization** (TODO in `websocket/manager.py`): a passenger may subscribe only to `feeder:<id>` of their own active booking, plus `corridor:<id>` (the passenger map shows every on-duty feeder); a driver only to their own feeder; government to all. Live tracking will read the active booking's `feeder_id` from the bookings table (read-only) unless booking prefers to expose a helper for it.
 - **`feeder.offline` WS event** when a driver ends duty or the position expires (today subscribers just stop receiving positions). New server → client type for §5.1.
 - **Automatic `arrived`** from geofencing the feeder's position against the pickup stop (§5.6): same endpoint/effect as the manual event.
 
