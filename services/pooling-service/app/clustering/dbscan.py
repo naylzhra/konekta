@@ -1,20 +1,22 @@
-"""
-DBSCAN clustering for demand pooling.
+"""DBSCAN over demand points (DESIGN.md §13.2).
 
-TODO: implement real clustering logic (parameter tuning, feature scaling,
-integration with live demand-point stream). This is a placeholder so the
-service boots and the module shape is stable for callers to build against.
+Uses the haversine metric, so ε is a real ground distance in metres rather
+than degrees. Callers partition by corridor, direction and time slot first;
+this module only does the spatial step.
 """
+import numpy as np
 from sklearn.cluster import DBSCAN
 
+from app.geo import EARTH_RADIUS_M
+from app.models import GeoPoint
 
-def cluster_demand_points(points: list[tuple[float, float]], eps: float = 0.3, min_samples: int = 3):
-    """
-    points: list of (lat, lon) pairs.
-    Returns sklearn DBSCAN cluster labels (-1 = noise). Not yet wired into
-    any endpoint.
-    """
+NOISE = -1
+
+
+def cluster_demand_points(points: list[GeoPoint], eps_m: float, min_pts: int) -> list[int]:
+    """One label per point; NOISE (-1) for points in no cluster."""
     if not points:
         return []
-    model = DBSCAN(eps=eps, min_samples=min_samples)
-    return model.fit_predict(points)
+    coordinates = np.radians([[p.lat, p.lng] for p in points])
+    model = DBSCAN(eps=eps_m / EARTH_RADIUS_M, min_samples=min_pts, metric="haversine", algorithm="ball_tree")
+    return [int(label) for label in model.fit_predict(coordinates)]

@@ -110,3 +110,27 @@ async def route(
         ],
         "waypoints": waypoints,
     }
+
+
+@app.get("/nearest/v1/{profile}/{coordinates}")
+async def nearest(profile: str, coordinates: str, number: int = 1) -> dict:
+    """
+    Mimics OSRM's nearest endpoint shape:
+    https://project-osrm.org/docs/v5.24.0/api/#nearest-service
+
+    Without road data every point counts as "on a road", so the input point
+    is returned unchanged (distance 0). Real OSRM moves it onto the network.
+    """
+    try:
+        points = parse_coordinates(coordinates)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    if len(points) != 1:
+        raise HTTPException(status_code=400, detail="Exactly one coordinate is required")
+
+    lon, lat = points[0]
+    return {
+        "code": "Ok",
+        "waypoints": [{"location": [lon, lat], "distance": 0.0, "name": "", "hint": ""}],
+    }

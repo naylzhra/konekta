@@ -9,6 +9,7 @@ Shared working design for the two passenger-trip workstreams. Both owners read a
 | Booking: trip plans, bookings, state machine, cancel, history, consent log | **Booking** | `services/gateway/app/bookings/`, `app/routers/bookings.py`, `infra/db/migrations/004_bookings.sql`, `apps/mobile/lib/features/booking/` |
 | Home + Trips tab content | **Booking** | `features/booking/ui/` widgets, mounted by the passenger shell |
 | WS hub routing (envelope, per-user delivery, topics) | **Booking** implements, both use | `services/gateway/app/websocket/manager.py` |
+| Adaptive virtual stops: clustering, validation, candidate evaluation, feeder heuristic (§13) | **Booking** | `services/pooling-service/`, `services/stop-optimization-service/`; gateway orchestration planned (§13.6) |
 | Live feeder position feed (Redis GEO → WS) | **Live tracking** | gateway feeder module + publisher (TBD by owner) |
 | `FeederPositionProvider` (gateway) / `FeederPositionStream` (Flutter) | **Live tracking** | see §5.2, §5.4 |
 | Device location `UserLocationProvider` (Flutter), location permission | **Live tracking** | see §5.3 |
@@ -32,7 +33,7 @@ Rule: need a change in the other side's area → propose it here, don't edit the
 
 **Driver** — works per **stop**, not per passenger. Arrives at a pickup stop, picks up whoever is there, leaves. Does not confirm individual passengers. Arriving at a drop-off stop completes the trips of passengers on board who were going there.
 
-Stops are `static` (fixed halte) or `virtual` (computed, time-bound). UI must label which.
+Stops are `static` (fixed halte) or `virtual` (derived from observed demand and approved for operation, time-bound; §13). UI must label which.
 
 ## 2. Domain model
 - `Stop { id, type: static|virtual, location, name, corridor_id, valid_until? }`
@@ -139,7 +140,7 @@ Other tabs (Map) get the shared WS via `BookingScope.of(context).session.wsClien
 `POST /driver/stops/{stop_id}/arrived` · `POST /driver/stops/{stop_id}/departed` — `require_role("driver")`, body `{feeder_id}`. Effects per §3. The live-tracking feed may also emit `arrived` automatically from geofencing later; same endpoint/effect.
 
 ### 5.7 Other consumed interfaces
-- `StopAssigner` → pooling-service / stop-optimization-service: `assign_pickup_stop(request) -> Stop | None`. `StubStopAssigner` (`STOP_ASSIGNER=stub`) uses a small, clearly labelled placeholder stop list (no real halte data yet). Real HTTP client goes behind the same interface; don't implement logic inside those services.
+- `StopAssigner` → pooling-service / stop-optimization-service: `assign_pickup_stop(request) -> Stop | None`. `StubStopAssigner` (`STOP_ASSIGNER=stub`) uses a small, clearly labelled placeholder stop list (no real halte data yet). Real implementation goes behind the same interface: the services compute candidates (§13), and assignment picks among *approved* stops only (§13.6).
 - `RoutingClient` → OSRM-compatible via `OSRM_BASE_URL` (`osrm-mock` by default).
 - Auth: `get_current_session` / `require_role` from `app/auth/dependencies.py`.
 
@@ -217,7 +218,10 @@ Open:
 - **Live tracking:** §5.2–§5.4 implemented as specified (`UserLocation` adds optional `headingDeg`). Requests to booking and planned work that needs booking data: see §5.9.
 - **Driver location consent:** drivers see a purpose rationale before the OS prompt, but nothing is recorded in `consent_log`; decide whether a `driver_tracking` purpose is needed (UU PDP).
 - **Shell:** confirm the `BookingScope` wrap in `PassengerMain` (§5.5) with the shell owner (shell now owns the session on `feat/user-live-tracking`, see §5.9).
-- **Real halte/corridor data** for `StopAssigner` and seed.
+- **Real halte/corridor data** for `StopAssigner` and seed — corridor *geometry* is now also needed for §13.1.
+- **Virtual stop thresholds (§13.8):** confirm service distance, max shift and max added travel time with Dishub Kota Bandung; tune ε/MinPts and hotspot thresholds on real demand.
+- **Restricted-zone data (§13.5):** source for junctions / no-stopping zones (OSM extract or Dishub). Until then traffic safety passes by default and says so.
+- **IoT feeder positions (§13.9):** ESP32 + GNSS devices report over Wi-Fi; needs device auth and a decision with live tracking on whether devices call `POST /feeders/me/position` or a device-specific endpoint.
 - **Suspended users mid-trip:** auth's `require_not_suspended` reads session `active_trip_id`, which booking does not set. Agree with auth whether that matters for MVP.
 - **Driver wait time** at a stop before departing: free choice for now; add a minimum if no-shows look unfair.
 
@@ -225,3 +229,115 @@ Open:
 - Flutter is not installed in every dev environment; state in PRs whether `flutter analyze`/`flutter test` ran.
 - `apps/mobile/android/` is committed (README says otherwise); manifest changes affect everyone.
 - Passenger shell (`features/passenger/passenger_home.dart`, `tabs/`, `shared_widgets/konekta_*`) is on `dev`. Still don't branch from `feat/user-live-tracking`.
+
+## 13. Adaptive virtual stops
+
+Virtual stops come from observed demand, not from individual requests. A stop is proposed only when demand recurs, is evaluated against corridor, walking, safety and regulatory criteria, and is used for passengers only after operational approval. Following consultation with Dishub Kota Bandung, a proposal may **shift an existing stop** towards demand (within service-distance and travel-time limits) or add a new one. Candidates that aren't approved are still shown on the Government Mobility Intelligence Dashboard as recommendations.
+
+```
+trip_plans (window) --> pooling-service  POST /v1/demand-clusters
+                         13.1 corridor + direction            -> drop trips no corridor serves
+                         13.2 partition (corridor, direction, time slot) -> DBSCAN
+                         13.3 hotspot validation              -> not valid: kept as history
+                         13.4 weighted centroid               -> OSRM /nearest (validated only)
+                    --> stop-optimization-service  POST /v1/stop-candidates/evaluate
+                         13.5 coverage, walking, safety, regulation -> rank, resolve conflicts
+                    --> gateway (planned, 13.6): store; government/operator approves -> stops (virtual)
+```
+
+Both services are **stateless**: the gateway (system of record) sends the data and stores the result. They receive no user ids: the gateway sends a per-run pseudonymous `requester_key` (salted hash) and request ids it can map back (§8). Each service keeps its own copy of the geometry helpers (`app/geo.py`) so it stays independently deployable.
+
+### 13.1 Corridor identification — `pooling-service/app/corridors.py`
+A trip belongs to the corridor whose catchment (`catchment_m`, default 800 m from the corridor path) holds **both** origin and destination and along which the trip progresses at least `min_corridor_progress_m` (300 m). Direction is `forward` when the destination projects further along the path than the origin, else `backward`. With several matches, the corridor with the smallest summed offset wins. Request **time** enters through the time-of-day slot (13.2); `requested_at` outside the run window is ignored.
+
+### 13.2 Clustering — `pooling-service/app/clustering/dbscan.py`, `app/pipeline.py`
+Requests are partitioned by `(corridor, direction, time slot)` — slot = `slot_minutes` (60) of WIB time of day — so only trips heading the same way at the same time of day can pool. Each partition runs DBSCAN with the **haversine** metric, so ε is in metres (`eps_m`, 150) with `min_pts` (4). The clustered point is the origin for pickup stops (`endpoint=pickup`) or the destination for drop-off stops (`endpoint=dropoff`). Noise is counted, not returned.
+
+### 13.3 Demand hotspot validation — `pooling-service/app/validation.py`
+| Check | Measure | Default |
+|---|---|---|
+| `unique_users` | distinct `requester_key` (people, not requests) | ≥ 5 |
+| `spatial_concentration` | 80th-percentile distance of members to the centroid | ≤ 250 m |
+| `temporal_consistency` | active days (WIB dates with demand), and active days / days in the window | ≥ 3 days and ≥ 0.3 |
+
+All three pass → `validated` (a stop candidate). Otherwise the cluster comes back with `failed_checks` and is stored as historical demand for analysis.
+
+### 13.4 Candidate point — `pooling-service/app/virtual_stop/centroid.py`, `app/osrm_client.py`
+Weighted centroid of the cluster's points, each weighing `seats × 0.5^(age_days / recency_half_life_days)` (14 days) relative to the window end. Validated clusters are snapped onto the road with OSRM `/nearest` (`snapped_location`, `snap_distance_m`). OSRM failure → 503 `routing_unavailable` (no partial result). osrm-mock implements `/nearest` as identity (it has no road data).
+
+### 13.5 Candidate evaluation — `stop-optimization-service/app/evaluation/evaluate.py`
+Hard criteria (all must pass):
+
+| Criterion | Rule | Default |
+|---|---|---|
+| `corridor_coverage` | distance from the stop to the corridor path | ≤ 100 m |
+| `pedestrian_access` | demand-weighted share of cluster points whose estimated walk (straight line × 1.3) is within `max_walk_m` | ≥ 80 % within 400 m |
+| `traffic_safety` | clearance from every restricted zone (junction, no-stopping, …) | ≥ 0 m (outside); passes with a note when no zones are supplied |
+| `stop_spacing` (regulation) | distance to other stops on the corridor, excluding the one being shifted | ≥ 300 m |
+| `operational_time` (regulation) | feeder out-and-back from the closest corridor point to the stop (OSRM driving) | ≤ 120 s |
+
+A candidate within `max_shift_m` (500 m) of an existing stop on its corridor is `action=relocate_stop` (`relocates_stop_id`), else `new_stop`. Eligible candidates are scored `0.4·demand + 0.25·walk coverage + 0.2·(1 − added time / max) + 0.15·safety margin` (demand normalised to the batch maximum, safety margin capped at 50 m). Conflicts are resolved greedily by score: a candidate closer than the stop spacing to a better one, or shifting the same stop, becomes ineligible with the reason in `stop_spacing.detail`. Output: eligible candidates ranked first, then the rest, each with every check's value and threshold.
+
+### 13.6 Lifecycle and approval — gateway (planned, next slice)
+- Migration `006_virtual_stops.sql` (additive): corridor geometry (`corridors.path geography(LineString)`, `catchment_m`) with placeholder paths for K1/K2; `demand_clusters` (every cluster incl. non-validated, as history, linked to its `trip_plans`); `stop_candidates` (evaluation result + `status: proposed|approved|rejected|superseded`, `reviewed_by`, `reviewed_at`); `restricted_zones`.
+- `POST /virtual-stops/runs` (`admin`/`government`): read `trip_plans` in the window → pooling-service → stop-optimization-service → store. Later a scheduled job.
+- `GET /virtual-stops/candidates?status=` and `POST /virtual-stops/candidates/{id}/approve|reject` (`government`/`admin`) for the dashboard. Approve → insert a `virtual` stop (`valid_until` = review horizon, e.g. 30 days, re-validated by later runs); `relocate_stop` closes the shifted stop for new assignments instead of deleting it (bookings keep their snapshots, §2).
+- `DbStopAssigner` (`STOP_ASSIGNER=db`): nearest approved stop (static or valid virtual) on the trip's corridor within `MAX_WALK_TO_STOP_M`. `StubStopAssigner` stays the default until approved stops exist; with `db`, no virtual stop is invented at the requested point any more.
+
+### 13.7 Feeder operations heuristic — `stop-optimization-service/app/scoring/heuristic.py`
+`POST /v1/feeder-stop-priorities` ranks stops with waiting passengers for one feeder: `0.5·active demand (normalised) − 0.3·min(detour / 600 s, 1) + 0.2·min(time since last served / 1800 s, 1)`. Demand density pulls the feeder to busy stops, detour cost keeps it on its run, and recency prevents starvation. Not called by the gateway yet (dispatch still uses `FeederPositionProvider.nearest`).
+
+### 13.8 Parameters
+All thresholds are request parameters with the defaults above (`PoolingParams`, `EvaluationParams`, `FeederHeuristicParams`), so runs can be tuned without a deploy. They are **starting values**, not validated: regulatory limits need confirmation with Dishub (§11), and clustering/hotspot thresholds need tuning on real demand.
+
+### 13.9 Related, unchanged
+- **Demand forecasting:** XGBoost on historical demand (`forecasting-service`, still a stub); its output will feed the dashboard and, later, slot-level demand for 13.2.
+- **Feeder positions:** ESP32 + GPS/GNSS devices on feeders send coordinates over Wi-Fi; positions flow through live tracking (§5.8) into Redis GEO. Device auth/endpoint is an open question (§11).
+
+### 13.10 Status
+Implemented: 13.1–13.5 and 13.7 as service endpoints with unit tests (`services/pooling-service/tests`, `services/stop-optimization-service/tests`). Planned: 13.6. The gateway doesn't call either service yet; everything still missing is listed in 13.11.
+
+### 13.11 Missing for further implementation
+Ordered roughly by dependency. Owner is booking unless noted.
+
+**A. Gateway slice (13.6) — needed before anything reaches passengers**
+- [ ] `006_virtual_stops.sql`: `corridors.path geography(LineString,4326)` + `catchment_m` (placeholder K1/K2 paths, labelled as such); `virtual_stop_runs` (window, endpoint, params JSON, summary, started/finished, triggered_by) so every result is reproducible; `demand_clusters` (run id, cluster fields from §13.2–13.3, `validated`, `failed_checks`); `demand_cluster_members` (cluster id → `trip_plans.id`); `stop_candidates` (run id, cluster id, snapped location, evaluation JSON, `eligible`, `rank`, `score`, `action`, `relocates_stop_id`, `status`, `reviewed_by`, `reviewed_at`, `review_note`); `restricted_zones` (kind, location, radius_m, source).
+- [ ] Stops lifecycle: a way to retire a shifted or expired stop for **new** assignments without deleting it (e.g. `stops.retired_at`), since bookings reference stops by id and keep snapshots (§2). Additive column; `stops_valid_until_matches_type` stays.
+- [ ] Clients behind Protocols in `app/virtual_stops/clients.py` (`PoolingClient`, `StopEvaluationClient`) with timeouts and typed errors, `POOLING_URL` / `STOP_OPTIMIZATION_URL` config, and stub implementations for tests.
+- [ ] Pseudonymisation before sending: `requester_key = HMAC(per-run random salt, user_id)`, salt never stored; request ids are `trip_plans.id`. No coordinates or ids in logs (§8).
+- [ ] `POST /virtual-stops/runs` (`admin`/`government`), body `{window_start, window_end, endpoint, params?}`: read `trip_plans` in the window (origin, destination, created_at, seats from the booking if any, else 1), call pooling → evaluation, store run/clusters/candidates in one transaction. 503 if a service is down; nothing partial is stored.
+- [ ] Candidate dedup across runs: a new candidate within `min_stop_spacing_m` of an open (`proposed`) candidate of the same corridor/direction/endpoint supersedes it (`status=superseded`) instead of piling up duplicates.
+- [ ] `GET /virtual-stops/candidates?status=&corridor_id=` and `GET /virtual-stops/runs/{id}` for the dashboard; `POST /virtual-stops/candidates/{id}/approve|reject` with `review_note`. Approve: `new_stop` → insert `virtual` stop with `valid_until = now + VIRTUAL_STOP_REVIEW_DAYS` (30); `relocate_stop` → insert the new stop and retire the shifted one. Idempotent by state (repeat returns current), wrong state → 409 `invalid_transition`.
+- [ ] `DbStopAssigner` (`STOP_ASSIGNER=db`): identify the trip's corridor + direction (same rule as 13.1, PostGIS `ST_Distance`/`ST_LineLocatePoint`), then the nearest non-retired, still-valid stop on that corridor within `MAX_WALK_TO_STOP_M`; none → 422 `no_route` (no stop is invented). Keep `stub` as default until approved stops exist. Also resolves §5.9 request 3 (stub corridor ids).
+- [ ] Gateway tests (DB-backed, `TEST_DATABASE_URL`): run stores clusters/candidates, pseudonymisation (no user id leaves the gateway), approve/reject transitions and roles, dedup, `DbStopAssigner` picks approved stops only and respects retirement/expiry.
+
+**B. Adaptivity over time**
+- [ ] Scheduled runs (e.g. nightly over the last 28 days) in the gateway's background tasks, guarded so only one run executes at a time.
+- [ ] Re-validation: an approved virtual stop whose cluster no longer validates in later runs is flagged for review before its `valid_until`, not silently extended. Approved stops still valid are extended on review.
+- [ ] Decide whether a virtual stop is active only in the time slot(s) it was validated for (`active_slots`), or all day. Today `stops` has no notion of time of day; assignment would need it.
+- [ ] Drop-off stops: run with `endpoint=dropoff` too, and use the results in `assign_dropoff_stop`.
+- [ ] Notify affected passengers when a stop is relocated while they have an active booking at it (existing `stop.updated` event, §5.1).
+
+**C. Data**
+- [ ] Real corridor geometry and halte list from Dishub/operator (replaces placeholder paths and `STUB_STOPS`).
+- [ ] Restricted zones: junctions from an OSM extract of Bandung, no-stopping/school zones from Dishub. Until loaded, `traffic_safety` passes with a note (13.5).
+- [ ] Real OSRM with Bandung data (`OSRM_BASE_URL`); then switch the walking estimate from straight line × 1.3 to OSRM `foot` routes, and snapping becomes meaningful (osrm-mock's `/nearest` is identity).
+
+**D. Services hardening**
+- [ ] pooling-service runs DBSCAN inside an async handler, which blocks the event loop on large windows: move clustering to a worker thread (`run_in_threadpool`) and measure with ~50k requests.
+- [ ] Service-to-service auth: pooling (:8001) and stop-optimization (:8002) have no auth and are published on host ports by compose. In deployment keep them on the private network only, or add a shared internal token.
+- [ ] Parameter tuning on real demand (ε, MinPts, hotspot thresholds) and Dishub confirmation of regulatory limits (§11, 13.8); record the agreed values as defaults.
+- [ ] `geo.py` exists in both services (intentional copy); keep them identical when changing either.
+
+**E. Feeder operations and forecasting**
+- [ ] Wire the feeder heuristic (13.7) into dispatch: needs active demand per stop (non-terminal bookings), detour per feeder (OSRM from the feeder's position, §5.2) and last-served time (from driver `departed` events, §5.6, which need persisting).
+- [ ] Forecasting (XGBoost, `forecasting-service`): features from `demand_clusters` history per corridor/direction/slot; output to the dashboard and as expected demand for 13.2. Not started.
+- [ ] IoT feeder positions (ESP32 + GNSS over Wi-Fi): device identity and auth, endpoint decision with live tracking (§11).
+
+**F. Other owners**
+- [ ] Dashboard (React, not booking): candidate list/map with per-criterion results, approve/reject, run history. Needs the API in A.
+- [ ] Mobile: nothing new required for passengers beyond the existing static/virtual label; approved virtual stops arrive as normal stops.
+
+**G. Housekeeping**
+- [ ] Retention: `demand_clusters`/members and `virtual_stop_runs` follow the backend retention job (§8); members link to `trip_plans`, so deleting plans must cascade or null.
+- [ ] Update `AGENTS.md` (still says not to implement logic in pooling/stop-optimization) and the service rows in `README.md`.
