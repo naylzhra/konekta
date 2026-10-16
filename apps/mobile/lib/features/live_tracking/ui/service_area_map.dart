@@ -5,7 +5,11 @@ import 'package:latlong2/latlong.dart';
 import '../../../core/strings/live_tracking_strings.dart';
 import '../domain/service_area.dart';
 
-/// TODO: the public OSM tile server is for development only (its usage policy forbids heavy/production use)
+/// Mapbox tiles: `--dart-define=MAPBOX_TOKEN=pk...` (optionally `MAPBOX_STYLE=<owner>/<style>`)
+const _mapboxToken = String.fromEnvironment('MAPBOX_TOKEN');
+const _mapboxStyle = String.fromEnvironment('MAPBOX_STYLE', defaultValue: 'mapbox/streets-v12');
+const _useMapbox = _mapboxToken != '';
+
 class ServiceAreaMap extends StatelessWidget {
   const ServiceAreaMap({
     super.key,
@@ -30,7 +34,9 @@ class ServiceAreaMap extends StatelessWidget {
   /// Taps on the map itself, not on a marker.
   final VoidCallback? onTap;
 
-  static const _tileUrl = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
+  static const _tileUrl = _useMapbox
+      ? 'https://api.mapbox.com/styles/v1/$_mapboxStyle/tiles/256/{z}/{x}/{y}@2x?access_token=$_mapboxToken'
+      : 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
   static final _bounds = LatLngBounds(
     const LatLng(ServiceArea.minLat, ServiceArea.minLng),
     const LatLng(ServiceArea.maxLat, ServiceArea.maxLng),
@@ -54,7 +60,11 @@ class ServiceAreaMap extends StatelessWidget {
         TileLayer(urlTemplate: _tileUrl, userAgentPackageName: 'com.example.konekta_mobile'),
         MarkerLayer(markers: markers),
         const RichAttributionWidget(
-          attributions: [TextSourceAttribution(LiveTrackingStrings.osmAttribution)],
+          attributions: [
+            if (_useMapbox) TextSourceAttribution(LiveTrackingStrings.mapboxAttribution),
+            TextSourceAttribution(LiveTrackingStrings.osmAttribution),
+            if (_useMapbox) TextSourceAttribution(LiveTrackingStrings.improveThisMap),
+          ],
         ),
       ],
     );

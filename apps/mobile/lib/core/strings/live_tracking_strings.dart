@@ -53,6 +53,8 @@ class LiveTrackingStrings {
 
   // Map
   static const osmAttribution = 'OpenStreetMap contributors';
+  static const mapboxAttribution = 'Mapbox';
+  static const improveThisMap = 'Improve this map';
 
   // Passenger map
   static const noActiveTrip = 'Belum ada perjalanan aktif';
