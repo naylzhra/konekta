@@ -56,9 +56,12 @@ class HomeSearchBar extends StatelessWidget {
   }
 }
 
-/// Stylised map preview with the nearby-feeder chip and a locate button.
+/// Map preview with the nearby-feeder chip and a locate button. Shows [map]
+/// when given, otherwise a stylised placeholder.
 class HomeMapHero extends StatelessWidget {
-  const HomeMapHero({super.key, required this.nearbyFeeders, this.onLocate});
+  const HomeMapHero({super.key, required this.nearbyFeeders, this.onLocate, this.map});
+
+  final Widget? map;
 
   /// Null when unknown: the chip is hidden.
   final int? nearbyFeeders;
@@ -74,19 +77,23 @@ class HomeMapHero extends StatelessWidget {
         width: double.infinity,
         child: Stack(
           children: [
-            const Positioned.fill(child: CustomPaint(painter: _MapPainter())),
-            const Align(
-              alignment: Alignment(-0.12, -0.3),
-              child: _MapPin(color: Color(0xFF2FBF8A), size: 48),
-            ),
-            const Align(
-              alignment: Alignment(0.52, -0.5),
-              child: _MapPin(color: AppColors.primaryContainer, size: 44),
-            ),
-            const Align(
-              alignment: Alignment(-0.38, 0.28),
-              child: _MapPin(color: Color(0xFF2FBF8A), size: 20, showIcon: false),
-            ),
+            if (map != null)
+              Positioned.fill(child: map!)
+            else ...const [
+              Positioned.fill(child: CustomPaint(painter: _MapPainter())),
+              Align(
+                alignment: Alignment(-0.12, -0.3),
+                child: _MapPin(color: Color(0xFF2FBF8A), size: 48),
+              ),
+              Align(
+                alignment: Alignment(0.52, -0.5),
+                child: _MapPin(color: AppColors.primaryContainer, size: 44),
+              ),
+              Align(
+                alignment: Alignment(-0.38, 0.28),
+                child: _MapPin(color: Color(0xFF2FBF8A), size: 20, showIcon: false),
+              ),
+            ],
             if (feeders != null)
               Positioned(
                 top: AppSpacing.sm,

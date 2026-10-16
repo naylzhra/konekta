@@ -22,6 +22,7 @@ class BookingHomeSection extends StatelessWidget {
     required this.controller,
     required this.locations,
     this.onOpenMap,
+    this.mapPreview,
   });
 
   final BookingController controller;
@@ -29,6 +30,9 @@ class BookingHomeSection extends StatelessWidget {
 
   /// Switches to the Map tab (Route Info, locate button).
   final VoidCallback? onOpenMap;
+
+  /// Live map for the hero; a stylised placeholder when null.
+  final Widget? mapPreview;
 
   void _openPlanner(BuildContext context) {
     Navigator.of(context)
@@ -73,7 +77,7 @@ class BookingHomeSection extends StatelessWidget {
               HomeSearchBar(onTap: () => _openPlanner(context)),
               const SizedBox(height: AppSpacing.md),
             ],
-            HomeMapHero(nearbyFeeders: HomeStats.nearbyFeeders, onLocate: onOpenMap),
+            HomeMapHero(nearbyFeeders: HomeStats.nearbyFeeders, onLocate: onOpenMap, map: mapPreview),
             const SizedBox(height: AppSpacing.md),
             if (hasBooking)
               ActiveBookingCard(controller: controller)

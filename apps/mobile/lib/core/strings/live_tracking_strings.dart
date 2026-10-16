@@ -71,6 +71,23 @@ class LiveTrackingStrings {
   static const showMyLocation = 'Tampilkan lokasi saya';
   static const turnOnGps = 'Nyalakan GPS';
   static const recenter = 'Pusatkan peta';
+  static String feedersOnDuty(int count) => '$count feeder sedang beroperasi';
+
+  // Route search
+  static const searchRouteHint = 'Cari rute atau koridor';
+  static const allRoutes = 'Semua rute';
+  static const noRouteFound = 'Rute tidak ditemukan';
+  static String routeFeeders(int count) => count == 0 ? 'Tidak ada feeder beroperasi' : '$count feeder beroperasi';
+  static const clearRoute = 'Hapus filter rute';
+  static const fleetLoadFailed = 'Gagal memuat feeder. Ketuk untuk coba lagi.';
+
+  // Feeder info (tapped on the map)
+  static String fleetFeederTitle(int? number, String feederId) =>
+      number == null ? 'Feeder $feederId' : 'Feeder $number';
+  static String seats(int occupancy, int capacity) => '$occupancy/$capacity kursi terisi';
+  static const full = 'Penuh';
+  static const bookFromHome = 'Pesan dari tab Home untuk naik feeder.';
+
   static const passengerRationaleTitle = 'Tampilkan lokasi Anda';
   static const passengerRationaleBody =
       'KONEKTA memakai lokasi Anda untuk menampilkan posisi Anda di peta, dekat halte dan feeder. '

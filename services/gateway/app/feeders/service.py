@@ -1,6 +1,6 @@
 import logging
 from datetime import datetime, timezone
-from typing import Protocol
+from typing import Optional, Protocol
 from uuid import UUID
 
 from fastapi import status
@@ -14,7 +14,7 @@ from app.websocket.manager import ConnectionManager
 
 logger = logging.getLogger(__name__)
 
-_PUBLISHED_FIELDS = {"feeder_id", "lat", "lng", "heading", "occupancy", "updated_at"}
+_PUBLISHED_FIELDS = {"feeder_id", "lat", "lng", "heading", "occupancy", "capacity", "corridor_id", "updated_at"}
 
 
 def in_service_area(lat: float, lng: float) -> bool:
@@ -32,8 +32,14 @@ class HubFeederPositionPublisher:
 
     async def feeder_position(self, position: FeederPosition) -> None:
         payload = position.model_dump(mode="json", include=_PUBLISHED_FIELDS)
+        # feeder:<id> for a passenger following their booked feeder,
+        # corridor:<id> for the passenger map showing every feeder.
+        topics = [f"feeder:{position.feeder_id}"]
+        if position.corridor_id is not None:
+            topics.append(f"corridor:{position.corridor_id}")
         try:
-            await self._hub.publish(f"feeder:{position.feeder_id}", "feeder.position", payload)
+            for topic in topics:
+                await self._hub.publish(topic, "feeder.position", payload)
         except Exception:  # noqa: BLE001 -- position is stored; subscribers catch up on the next report
             logger.exception("failed to publish feeder.position")
 
@@ -90,6 +96,9 @@ class FeederTrackingService:
         await self._positions.store(position)
         await self._publisher.feeder_position(position)
         return PositionAccepted(feeder_id=feeder.id, updated_at=position.updated_at)
+
+    async def live_feeders(self, corridor_id: Optional[str] = None) -> list[FeederPosition]:
+        return await self._positions.list_live(corridor_id)
 
     async def go_offline(self, driver_id: UUID) -> None:
         feeder = await self._assigned_for_write(driver_id)

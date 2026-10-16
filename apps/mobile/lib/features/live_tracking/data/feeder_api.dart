@@ -32,6 +32,15 @@ class FeederApi {
     ];
   }
 
+  /// Every feeder currently on duty; live updates follow on `corridor:<id>`.
+  Future<List<FeederPosition>> liveFeeders(String token) async {
+    final body = await _request('GET', '/feeders/live', token: token);
+    return [
+      for (final item in (body as Map<String, dynamic>)['items'] as List<dynamic>)
+        FeederPosition.fromJson(item as Map<String, dynamic>),
+    ];
+  }
+
   Future<AssignedFeeder> myFeeder(String token) async =>
       AssignedFeeder.fromJson(await _request('GET', '/feeders/me', token: token) as Map<String, dynamic>);
 

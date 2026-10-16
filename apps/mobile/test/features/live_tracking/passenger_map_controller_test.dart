@@ -40,6 +40,9 @@ class _FakePositions implements FeederPositionStream {
       (controllers[feederId] = StreamController<FeederPosition>(onCancel: () => cancelled.add(feederId))).stream;
 
   @override
+  Stream<FeederPosition> subscribeCorridor(String corridorId) => const Stream.empty();
+
+  @override
   FeederPosition? lastKnown(String feederId) => null;
 }
 

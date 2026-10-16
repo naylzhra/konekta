@@ -52,6 +52,23 @@ class PositionReport(BaseModel):
     accuracy_m: Optional[float] = Field(default=None, ge=0)
 
 
+class LiveFeeder(BaseModel):
+    """Same shape as the `feeder.position` WS payload."""
+
+    feeder_id: str
+    lat: float
+    lng: float
+    heading: Optional[float] = None
+    occupancy: int
+    capacity: int
+    corridor_id: Optional[str] = None
+    updated_at: datetime
+
+
+class LiveFeederList(BaseModel):
+    items: list[LiveFeeder]
+
+
 class PositionAccepted(BaseModel):
     feeder_id: str
     updated_at: datetime

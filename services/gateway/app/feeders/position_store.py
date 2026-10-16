@@ -47,6 +47,11 @@ class RedisFeederPositionProvider:
         raw = await self._redis.get(_position_key(feeder_id))
         return FeederPosition.model_validate_json(raw) if raw is not None else None
 
+    async def list_live(self, corridor_id: Optional[str] = None) -> list[FeederPosition]:
+        """Every feeder whose position hasn't expired, i.e. currently on duty."""
+        members = await self._redis.zrange(GEO_KEY, 0, -1)
+        return await self._load(members, corridor_id)
+
     async def nearest(
         self,
         lat: float,
@@ -58,6 +63,10 @@ class RedisFeederPositionProvider:
         members = await self._redis.geosearch(
             GEO_KEY, longitude=lng, latitude=lat, radius=radius_m, unit="m", sort="ASC"
         )
+        return (await self._load(members, corridor_id))[:limit]
+
+    async def _load(self, members: list[str], corridor_id: Optional[str]) -> list[FeederPosition]:
+        """Positions for GEO members in order, pruning members whose position expired."""
         if not members:
             return []
         raws = await self._redis.mget([_position_key(member) for member in members])
@@ -67,4 +76,4 @@ class RedisFeederPositionProvider:
         positions = [FeederPosition.model_validate_json(raw) for raw in raws if raw is not None]
         if corridor_id is not None:
             positions = [p for p in positions if p.corridor_id == corridor_id]
-        return positions[:limit]
+        return positions

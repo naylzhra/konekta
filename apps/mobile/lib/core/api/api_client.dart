@@ -33,7 +33,6 @@ class AuthException implements Exception {
   String toString() => message;
 }
 
-final _sharedHttpClient = http.Client();
 const _requestTimeout = Duration(seconds: 10);
 
 /// Response of [ApiClient.send]: status code plus the decoded JSON body

@@ -4,7 +4,9 @@ import '../../core/location/user_location_provider.dart';
 import '../../shared_widgets/konekta_navbar.dart';
 import '../../shared_widgets/konekta_tab_scaffold.dart';
 import '../booking/ui/booking_scope.dart';
+import '../live_tracking/data/feeder_api.dart';
 import '../live_tracking/data/feeder_position_stream.dart';
+import '../live_tracking/state/feeder_fleet_controller.dart';
 import '../live_tracking/state/passenger_map_controller.dart';
 import 'booking_active_trip.dart';
 import 'tabs/home_tab.dart';
@@ -34,6 +36,7 @@ class _PassengerTabsState extends State<_PassengerTabs> {
   WsFeederPositionStream? _feederPositions;
   BookingActiveTrip? _activeTrip;
   PassengerMapController? _map;
+  FeederFleetController? _fleet;
 
   @override
   void didChangeDependencies() {
@@ -50,10 +53,19 @@ class _PassengerTabsState extends State<_PassengerTabs> {
       connection: wsClient.states,
       initialConnection: wsClient.state,
     )..start();
+    final feederApi = FeederApi(scope.session.apiClient);
+    final token = scope.session.token;
+    _fleet = FeederFleetController(
+      loadCorridors: feederApi.listCorridors,
+      loadLive: () => feederApi.liveFeeders(token),
+      positions: feederPositions,
+      connection: wsClient.states,
+    )..start();
   }
 
   @override
   void dispose() {
+    _fleet?.dispose();
     _map?.dispose();
     _activeTrip?.dispose();
     _feederPositions?.dispose();
@@ -73,7 +85,12 @@ class _PassengerTabsState extends State<_PassengerTabs> {
         KonektaNavItem(icon: Icons.map_outlined, selectedIcon: Icons.map, label: 'Map'),
         KonektaNavItem(icon: Icons.person_outline, selectedIcon: Icons.person, label: 'Profile'),
       ],
-      tabs: [const HomeTab(), const TripsTab(), MapTab(controller: _map!), const ProfileTab()],
+      tabs: [
+        HomeTab(map: _map!, fleet: _fleet!),
+        const TripsTab(),
+        MapTab(controller: _map!, fleet: _fleet!),
+        const ProfileTab(),
+      ],
     );
   }
 }

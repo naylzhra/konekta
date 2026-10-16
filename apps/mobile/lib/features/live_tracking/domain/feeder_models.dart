@@ -67,6 +67,8 @@ class FeederPosition {
     required this.lng,
     this.heading,
     required this.occupancy,
+    this.capacity,
+    this.corridorId,
     required this.updatedAt,
   });
 
@@ -76,6 +78,8 @@ class FeederPosition {
         lng: (json['lng'] as num).toDouble(),
         heading: (json['heading'] as num?)?.toDouble(),
         occupancy: json['occupancy'] as int,
+        capacity: json['capacity'] as int?,
+        corridorId: json['corridor_id'] as String?,
         updatedAt: DateTime.parse(json['updated_at'] as String),
       );
 
@@ -84,5 +88,11 @@ class FeederPosition {
   final double lng;
   final double? heading;
   final int occupancy;
+
+  /// Null from gateways older than the corridor feed.
+  final int? capacity;
+  final String? corridorId;
   final DateTime updatedAt;
+
+  bool get isFull => capacity != null && occupancy >= capacity!;
 }

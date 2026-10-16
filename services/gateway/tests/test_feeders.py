@@ -54,6 +54,9 @@ class FakePositions:
     async def remove(self, feeder_id: str) -> None:
         self.removed.append(feeder_id)
 
+    async def list_live(self, corridor_id: Optional[str] = None) -> list[FeederPosition]:
+        return [p for p in self.stored if corridor_id is None or p.corridor_id == corridor_id]
+
 
 class RecordingPositionPublisher:
     def __init__(self) -> None:
@@ -147,12 +150,15 @@ async def test_go_offline_removes_the_drivers_feeder(tracking, positions):
     assert positions.removed == ["K1-01"]
 
 
-async def test_hub_publisher_sends_contract_payload_to_feeder_topic_subscribers():
+async def test_hub_publisher_sends_contract_payload_to_feeder_and_corridor_subscribers():
     hub = ConnectionManager()
-    subscriber, other = FakeSocket(), FakeSocket()
+    subscriber, corridor, other = FakeSocket(), FakeSocket(), FakeSocket()
     await hub.connect("s", subscriber, user_id="u1")
+    await hub.connect("c", corridor, user_id="u3")
     await hub.connect("o", other, user_id="u2")
     hub.subscribe("s", "feeder:K1-01")
+    hub.subscribe("c", "corridor:K1")
+    hub.subscribe("o", "corridor:K2")
 
     position = FeederPosition(
         feeder_id="K1-01", **IN_BANDUNG, heading=45, occupancy=1, capacity=8, corridor_id="K1", updated_at=NOW
@@ -167,10 +173,13 @@ async def test_hub_publisher_sends_contract_payload_to_feeder_topic_subscribers(
                 **IN_BANDUNG,
                 "heading": 45.0,
                 "occupancy": 1,
+                "capacity": 8,
+                "corridor_id": "K1",
                 "updated_at": "2026-10-15T08:00:00Z",
             },
         }
     ]
+    assert corridor.sent == subscriber.sent
     assert other.sent == []
 
 
@@ -204,6 +213,31 @@ async def test_feeder_endpoints_are_driver_only(feeder_client):
     for method, path in [("POST", "/feeders/me/position"), ("POST", "/feeders/me/offline"), ("GET", "/feeders/me")]:
         response = await feeder_client.request(method, path, json=IN_BANDUNG, headers=auth("t-passenger"))
         assert response.status_code == 403, path
+
+
+async def test_live_feeders_endpoint_lists_on_duty_feeders(feeder_client, positions):
+    positions.stored.append(
+        FeederPosition(feeder_id="K1-01", **IN_BANDUNG, occupancy=3, capacity=8, corridor_id="K1", updated_at=NOW)
+    )
+    positions.stored.append(
+        FeederPosition(feeder_id="K2-01", **IN_BANDUNG, occupancy=0, capacity=8, corridor_id="K2", updated_at=NOW)
+    )
+
+    response = await feeder_client.get("/feeders/live", headers=auth("t-passenger"))
+    assert response.status_code == 200, response.text
+    assert [item["feeder_id"] for item in response.json()["items"]] == ["K1-01", "K2-01"]
+    assert response.json()["items"][0] == {
+        "feeder_id": "K1-01",
+        **IN_BANDUNG,
+        "heading": None,
+        "occupancy": 3,
+        "capacity": 8,
+        "corridor_id": "K1",
+        "updated_at": "2026-10-15T08:00:00Z",
+    }
+
+    response = await feeder_client.get("/feeders/live", params={"corridor_id": "K2"}, headers=auth("t-passenger"))
+    assert [item["feeder_id"] for item in response.json()["items"]] == ["K2-01"]
 
 
 async def test_my_feeder_and_offline_endpoints(feeder_client, positions):
@@ -263,11 +297,23 @@ async def test_redis_nearest_orders_by_distance_and_filters(redis_positions):
     ]
 
 
+async def test_redis_list_live_filters_by_corridor(redis_positions):
+    _, store = redis_positions
+    await store.store(_position("K1-01", -6.9175, 107.6191))
+    await store.store(_position("K2-01", -6.95, 107.65, corridor_id="K2"))
+
+    assert sorted(p.feeder_id for p in await store.list_live()) == ["K1-01", "K2-01"]
+    assert [p.feeder_id for p in await store.list_live("K2")] == ["K2-01"]
+
+
 async def test_redis_expired_position_is_offline_and_pruned(redis_positions):
     client, store = redis_positions
     await store.store(_position("K1-01", -6.9175, 107.6191))
     await client.delete("feeders:pos:K1-01")  # what TTL expiry does
 
+    assert await store.list_live() == []
+    await store.store(_position("K1-02", -6.9175, 107.6191))
+    await client.delete("feeders:pos:K1-02")
     assert await store.nearest(-6.9175, 107.6191, radius_m=1000) == []
     assert await client.zscore("feeders:geo", "K1-01") is None
 

@@ -35,6 +35,30 @@ void main() {
     expect(corridor.availableFeeders.map((f) => f.id), ['K1-02']);
   });
 
+  test('lists live feeders with the token', () async {
+    final api = _api((request) async {
+      expect(request.url.path, '/feeders/live');
+      expect(request.headers['Authorization'], 'Bearer tok');
+      return _json({
+        'items': [
+          {
+            'feeder_id': 'K1-01',
+            'lat': -6.9,
+            'lng': 107.6,
+            'heading': null,
+            'occupancy': 8,
+            'capacity': 8,
+            'corridor_id': 'K1',
+            'updated_at': '2026-10-15T08:00:00Z',
+          },
+        ],
+      }, 200);
+    });
+
+    final [feeder] = await api.liveFeeders('tok');
+    expect((feeder.feederId, feeder.corridorId, feeder.capacity, feeder.isFull), ('K1-01', 'K1', 8, true));
+  });
+
   test('reports a position with the driver token and returns the accepted time', () async {
     final api = _api((request) async {
       expect(request.method, 'POST');

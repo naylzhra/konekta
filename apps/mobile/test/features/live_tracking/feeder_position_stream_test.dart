@@ -99,4 +99,40 @@ void main() {
     expect(feeders.lastKnown('K1-01')?.lat, -6.91);
     await subscription.cancel();
   });
+
+  test('corridor subscription gets every feeder on that corridor once, alongside a feeder subscription', () async {
+    final corridor = <String>[];
+    final booked = <String>[];
+    final s1 = feeders.subscribeCorridor('K1').listen((p) => corridor.add(p.feederId));
+    final s2 = feeders.subscribe('K1-01').listen((p) => booked.add(p.feederId));
+    await _settle();
+    expect(
+        transport.sent,
+        contains(equals({
+          'type': 'subscribe',
+          'payload': {'topic': 'corridor:K1'}
+        })));
+
+    final k1 = {..._position('K1-01', '2026-10-15T08:00:00Z'), 'capacity': 8, 'corridor_id': 'K1'};
+    transport
+      ..receive('feeder.position', k1)
+      ..receive('feeder.position', k1) // same report via the feeder topic
+      ..receive('feeder.position', {..._position('K1-02', '2026-10-15T08:00:00Z'), 'corridor_id': 'K1'})
+      ..receive('feeder.position', {..._position('K2-01', '2026-10-15T08:00:00Z'), 'corridor_id': 'K2'});
+    await _settle();
+
+    expect(corridor, ['K1-01', 'K1-02']);
+    expect(booked, ['K1-01']);
+    expect(feeders.lastKnown('K1-01')?.capacity, 8);
+
+    await s1.cancel();
+    await s2.cancel();
+    await _settle();
+    expect(
+        transport.sent,
+        contains(equals({
+          'type': 'unsubscribe',
+          'payload': {'topic': 'corridor:K1'}
+        })));
+  });
 }

@@ -6,16 +6,19 @@ import 'package:latlong2/latlong.dart';
 import '../../../core/location/user_location_provider.dart';
 import '../../../core/strings/live_tracking_strings.dart';
 import '../../../core/theme/konekta_theme.dart';
+import '../../live_tracking/domain/feeder_models.dart';
+import '../../live_tracking/state/feeder_fleet_controller.dart';
 import '../../live_tracking/state/passenger_map_controller.dart';
 import '../../live_tracking/ui/map_markers.dart';
 import '../../live_tracking/ui/service_area_map.dart';
 
-/// Live position of the passenger's assigned feeder, their pickup stop and
-/// (if they allow it) their own location.
+/// Every on-duty feeder (searchable by route), the passenger's booked feeder
+/// highlighted, their pickup stop and (if they allow it) their own location.
 class MapTab extends StatefulWidget {
-  const MapTab({super.key, required this.controller});
+  const MapTab({super.key, required this.controller, required this.fleet});
 
   final PassengerMapController controller;
+  final FeederFleetController fleet;
 
   @override
   State<MapTab> createState() => _MapTabState();
@@ -31,7 +34,11 @@ class _MapTabState extends State<MapTab> {
   String? _framedFeederId;
   bool _framedMe = false;
 
+  /// Fleet feeder whose info card is open.
+  String? _selectedFeederId;
+
   PassengerMapController get _map => widget.controller;
+  FeederFleetController get _fleet => widget.fleet;
 
   @override
   void initState() {
@@ -85,6 +92,12 @@ class _MapTabState extends State<MapTab> {
     _fit(points);
   }
 
+  void _selectRoute(String? corridorId) {
+    _fleet.filterByCorridor(corridorId);
+    setState(() => _selectedFeederId = null);
+    if (corridorId != null) _fit([for (final f in _fleet.feeders) LatLng(f.lat, f.lng)]);
+  }
+
   void _fit(List<LatLng> points) {
     if (!_mapReady || points.isEmpty) return;
     if (points.length == 1) {
@@ -94,7 +107,7 @@ class _MapTabState extends State<MapTab> {
     _mapController.fitCamera(
       CameraFit.coordinates(
         coordinates: points,
-        padding: const EdgeInsets.fromLTRB(64, 96, 64, 220),
+        padding: const EdgeInsets.fromLTRB(64, 160, 64, 220),
         maxZoom: 17,
       ),
     );
@@ -136,12 +149,23 @@ class _MapTabState extends State<MapTab> {
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
-      listenable: _map,
+      listenable: Listenable.merge([_map, _fleet]),
       builder: (context, _) {
         final permission = _map.permission;
+        final selected = _selectedFleetFeeder();
         return Stack(
           children: [
-            ServiceAreaMap(controller: _mapController, onMapReady: _onMapReady, markers: _markers()),
+            ServiceAreaMap(
+              controller: _mapController,
+              onMapReady: _onMapReady,
+              onTap: () => setState(() => _selectedFeederId = null),
+              markers: passengerMapMarkers(
+                _map,
+                fleet: _fleet,
+                selectedFeederId: _selectedFeederId,
+                onTapFeeder: (id) => setState(() => _selectedFeederId = id),
+              ),
+            ),
             Positioned(
               top: AppSpacing.sm,
               left: AppSpacing.containerMargin,
@@ -149,7 +173,17 @@ class _MapTabState extends State<MapTab> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  if (_map.isReconnecting) const _Banner(text: LiveTrackingStrings.reconnecting),
+                  _RouteSearch(fleet: _fleet, onSelect: _selectRoute),
+                  if (_map.isReconnecting) ...[
+                    const SizedBox(height: AppSpacing.xs),
+                    const _Banner(text: LiveTrackingStrings.reconnecting),
+                  ] else if (_fleet.loadFailed) ...[
+                    const SizedBox(height: AppSpacing.xs),
+                    GestureDetector(
+                      onTap: _fleet.load,
+                      child: const _Banner(text: LiveTrackingStrings.fleetLoadFailed),
+                    ),
+                  ],
                   if (permission != null && permission != LocationPermissionState.granted)
                     Align(
                       alignment: Alignment.centerLeft,
@@ -183,7 +217,10 @@ class _MapTabState extends State<MapTab> {
                     child: const Icon(Icons.center_focus_strong),
                   ),
                   const SizedBox(height: AppSpacing.sm),
-                  _TripCard(map: _map),
+                  if (selected != null)
+                    _FleetFeederCard(feeder: selected, fleet: _fleet)
+                  else
+                    _TripCard(map: _map, onDuty: _fleet.onDutyCount),
                 ],
               ),
             ),
@@ -193,41 +230,246 @@ class _MapTabState extends State<MapTab> {
     );
   }
 
-  List<Marker> _markers() {
-    final feeder = _map.feeder;
-    final trip = _map.trip;
-    final me = _map.myLocation;
-    return [
-      if (trip?.pickup != null && !trip!.onBoard)
-        Marker(
-          point: trip.pickup!,
-          width: PickupStopMarker.size,
-          height: PickupStopMarker.size,
-          alignment: Alignment.topCenter,
-          child: const PickupStopMarker(),
+  /// The tapped feeder while it's still on duty (and not the booked one,
+  /// which the trip card already describes).
+  FeederPosition? _selectedFleetFeeder() {
+    final id = _selectedFeederId;
+    if (id == null || id == _map.trip?.feederId) return null;
+    for (final feeder in _fleet.feeders) {
+      if (feeder.feederId == id) return feeder;
+    }
+    return null;
+  }
+}
+
+/// Pickup stop, the passenger's location, the fleet and their booked feeder
+/// (drawn last, so on top, in its own colour); shared by the Map tab and the
+/// Home preview.
+List<Marker> passengerMapMarkers(
+  PassengerMapController map, {
+  FeederFleetController? fleet,
+  String? selectedFeederId,
+  void Function(String feederId)? onTapFeeder,
+}) {
+  final booked = map.feeder;
+  final trip = map.trip;
+  final me = map.myLocation;
+  return [
+    if (trip?.pickup != null && !trip!.onBoard)
+      Marker(
+        point: trip.pickup!,
+        width: PickupStopMarker.size,
+        height: PickupStopMarker.size,
+        alignment: Alignment.topCenter,
+        child: const PickupStopMarker(),
+      ),
+    if (me != null)
+      Marker(
+        point: LatLng(me.lat, me.lng),
+        width: UserLocationMarker.size,
+        height: UserLocationMarker.size,
+        child: const UserLocationMarker(),
+      ),
+    if (fleet != null)
+      for (final feeder in fleet.feeders)
+        if (feeder.feederId != trip?.feederId)
+          Marker(
+            point: LatLng(feeder.lat, feeder.lng),
+            width: FleetFeederMarker.size,
+            height: FleetFeederMarker.size,
+            child: GestureDetector(
+              onTap: onTapFeeder == null ? null : () => onTapFeeder(feeder.feederId),
+              child: FleetFeederMarker(full: feeder.isFull, selected: feeder.feederId == selectedFeederId),
+            ),
+          ),
+    if (booked != null)
+      Marker(
+        point: LatLng(booked.lat, booked.lng),
+        width: FeederMarker.size,
+        height: FeederMarker.size,
+        child: FeederMarker(stale: map.status == FeederTrackingStatus.stale),
+      ),
+  ];
+}
+
+/// Search field filtering the fleet by route (corridor).
+class _RouteSearch extends StatefulWidget {
+  const _RouteSearch({required this.fleet, required this.onSelect});
+
+  final FeederFleetController fleet;
+  final void Function(String? corridorId) onSelect;
+
+  @override
+  State<_RouteSearch> createState() => _RouteSearchState();
+}
+
+class _RouteSearchState extends State<_RouteSearch> {
+  final _text = TextEditingController();
+  final _focus = FocusNode();
+
+  @override
+  void initState() {
+    super.initState();
+    _text.text = widget.fleet.selectedCorridor?.name ?? '';
+    _focus.addListener(() => setState(() {}));
+  }
+
+  @override
+  void dispose() {
+    _text.dispose();
+    _focus.dispose();
+    super.dispose();
+  }
+
+  void _select(String? corridorId) {
+    _text.text = widget.fleet.corridor(corridorId)?.name ?? '';
+    _focus.unfocus();
+    widget.onSelect(corridorId);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final fleet = widget.fleet;
+    final filtered = fleet.corridorFilter != null;
+    // While editing, the text is a query; once a route is picked, show all
+    // routes again on focus so switching is one tap.
+    final query = filtered && _text.text == fleet.selectedCorridor?.name ? '' : _text.text;
+    final results = fleet.searchRoutes(query);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Material(
+          color: AppColors.surfaceContainerLowest,
+          elevation: 3,
+          borderRadius: BorderRadius.circular(AppRadius.md),
+          child: TextField(
+            controller: _text,
+            focusNode: _focus,
+            onChanged: (_) => setState(() {}),
+            textInputAction: TextInputAction.search,
+            onSubmitted: (_) {
+              if (results.length == 1) _select(results.single.id);
+            },
+            decoration: InputDecoration(
+              hintText: LiveTrackingStrings.searchRouteHint,
+              prefixIcon: const Icon(Icons.search, color: AppColors.primary),
+              suffixIcon: filtered || _text.text.isNotEmpty
+                  ? IconButton(
+                      tooltip: LiveTrackingStrings.clearRoute,
+                      icon: const Icon(Icons.close),
+                      onPressed: () => _select(null),
+                    )
+                  : null,
+              filled: false,
+              border: InputBorder.none,
+              enabledBorder: InputBorder.none,
+              focusedBorder: InputBorder.none,
+              contentPadding: const EdgeInsets.symmetric(vertical: AppSpacing.md),
+            ),
+          ),
         ),
-      if (me != null)
-        Marker(
-          point: LatLng(me.lat, me.lng),
-          width: UserLocationMarker.size,
-          height: UserLocationMarker.size,
-          child: const UserLocationMarker(),
+        if (_focus.hasFocus)
+          Padding(
+            padding: const EdgeInsets.only(top: AppSpacing.base),
+            child: Material(
+              color: AppColors.surfaceContainerLowest,
+              elevation: 3,
+              borderRadius: BorderRadius.circular(AppRadius.md),
+              clipBehavior: Clip.antiAlias,
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxHeight: 240),
+                child: ListView(
+                  shrinkWrap: true,
+                  padding: EdgeInsets.zero,
+                  children: [
+                    if (query.isEmpty)
+                      ListTile(
+                        leading: const Icon(Icons.layers_outlined),
+                        title: const Text(LiveTrackingStrings.allRoutes),
+                        subtitle: Text(LiveTrackingStrings.routeFeeders(fleet.onDutyCount)),
+                        selected: !filtered,
+                        onTap: () => _select(null),
+                      ),
+                    for (final corridor in results)
+                      ListTile(
+                        leading: const Icon(Icons.route_outlined),
+                        title: Text(corridor.name),
+                        subtitle: Text(LiveTrackingStrings.routeFeeders(fleet.onDutyOn(corridor.id))),
+                        selected: corridor.id == fleet.corridorFilter,
+                        onTap: () => _select(corridor.id),
+                      ),
+                    if (results.isEmpty) const ListTile(title: Text(LiveTrackingStrings.noRouteFound)),
+                  ],
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+/// Details of a fleet feeder tapped on the map.
+class _FleetFeederCard extends StatelessWidget {
+  const _FleetFeederCard({required this.feeder, required this.fleet});
+
+  final FeederPosition feeder;
+  final FeederFleetController fleet;
+
+  @override
+  Widget build(BuildContext context) {
+    final option = fleet.feederOption(feeder.feederId);
+    final corridor = fleet.corridor(fleet.corridorIdOf(feeder));
+    final capacity = feeder.capacity ?? option?.capacity;
+    return Material(
+      color: AppColors.surfaceContainerLowest,
+      elevation: 3,
+      borderRadius: BorderRadius.circular(AppRadius.lg),
+      child: Padding(
+        padding: const EdgeInsets.all(AppSpacing.md),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    LiveTrackingStrings.fleetFeederTitle(option?.number, feeder.feederId),
+                    style: AppTextStyles.headlineMd,
+                  ),
+                ),
+                if (feeder.isFull)
+                  Text(LiveTrackingStrings.full, style: AppTextStyles.labelMd.copyWith(color: AppColors.error)),
+              ],
+            ),
+            if (corridor != null) ...[
+              const SizedBox(height: AppSpacing.base),
+              Text(corridor.name, style: AppTextStyles.bodySm),
+            ],
+            const SizedBox(height: AppSpacing.base),
+            Text(
+              capacity == null
+                  ? LiveTrackingStrings.occupancy(feeder.occupancy)
+                  : LiveTrackingStrings.seats(feeder.occupancy, capacity),
+              style: AppTextStyles.bodySm,
+            ),
+            const SizedBox(height: AppSpacing.base),
+            const Text(LiveTrackingStrings.bookFromHome, style: AppTextStyles.bodySm),
+          ],
         ),
-      if (feeder != null)
-        Marker(
-          point: LatLng(feeder.lat, feeder.lng),
-          width: FeederMarker.size,
-          height: FeederMarker.size,
-          child: FeederMarker(stale: _map.status == FeederTrackingStatus.stale),
-        ),
-    ];
+      ),
+    );
   }
 }
 
 class _TripCard extends StatelessWidget {
-  const _TripCard({required this.map});
+  const _TripCard({required this.map, required this.onDuty});
 
   final PassengerMapController map;
+
+  /// On-duty feeders in the fleet.
+  final int onDuty;
 
   @override
   Widget build(BuildContext context) {
@@ -236,7 +478,7 @@ class _TripCard extends StatelessWidget {
     final (title, lines, isWarning) = switch (map.status) {
       FeederTrackingStatus.none => (
           LiveTrackingStrings.noActiveTrip,
-          [LiveTrackingStrings.noActiveTripHint],
+          [LiveTrackingStrings.noActiveTripHint, if (onDuty > 0) LiveTrackingStrings.feedersOnDuty(onDuty)],
           false,
         ),
       FeederTrackingStatus.searching => (LiveTrackingStrings.searchingFeeder, _pickupLine(trip), false),
@@ -300,8 +542,7 @@ class _TripCard extends StatelessWidget {
     return '± ${(meters / 1000).toStringAsFixed(1).replaceAll('.', ',')} km';
   }
 
-  static String _clock(DateTime t) =>
-      [t.hour, t.minute, t.second].map((v) => v.toString().padLeft(2, '0')).join(':');
+  static String _clock(DateTime t) => [t.hour, t.minute, t.second].map((v) => v.toString().padLeft(2, '0')).join(':');
 }
 
 class _Banner extends StatelessWidget {
