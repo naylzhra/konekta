@@ -28,12 +28,12 @@ Booking booking({
       ),
     );
 
-TripPlan plan({String id = 'plan-1', DateTime? expiresAt}) => TripPlan(
+TripPlan plan({String id = 'plan-1', int fareIdr = 5000, DateTime? expiresAt}) => TripPlan(
       id: id,
       origin: const GeoPoint(lat: -6.90, lng: 107.60),
       destination: const GeoPoint(lat: -6.92, lng: 107.62),
       legs: const [TripLeg(mode: LegMode.feeder, distanceM: 3000, durationS: 600)],
-      fareEstimateIdr: 5000,
+      fareEstimateIdr: fareIdr,
       etaMinutes: 12,
       expiresAt: expiresAt ?? _t0.add(const Duration(minutes: 5)),
     );
