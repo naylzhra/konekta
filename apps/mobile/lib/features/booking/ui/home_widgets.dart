@@ -135,6 +135,15 @@ class HomeMapHero extends StatelessWidget {
   }
 }
 
+/// The illustrative map background on its own, for screens that lay out their
+/// own pins and controls (trip planner).
+class StylizedMap extends StatelessWidget {
+  const StylizedMap({super.key});
+
+  @override
+  Widget build(BuildContext context) => const CustomPaint(painter: _MapPainter(), child: SizedBox.expand());
+}
+
 class _MapPin extends StatelessWidget {
   const _MapPin({required this.color, required this.size, this.showIcon = true});
 

@@ -31,7 +31,7 @@ void main() {
     backend.bookingUpdates.listen((b) => seen.add(b.status));
     await backend.recordConsent(granted: true);
 
-    final plan = (await backend.planTrip(origin: _origin, destination: _destination)).single;
+    final plan = (await backend.planTrip(origin: _origin, destination: _destination)).first;
     final created = await backend.createBooking(tripPlanId: plan.id, idempotencyKey: 'k1');
     final replayed = await backend.createBooking(tripPlanId: plan.id, idempotencyKey: 'k1');
     expect(replayed.id, created.id);
@@ -59,7 +59,7 @@ void main() {
   test('no supply ends in FAILED', () async {
     create(MockBookingScenario.noSupply);
     await backend.recordConsent(granted: true);
-    final plan = (await backend.planTrip(origin: _origin, destination: _destination)).single;
+    final plan = (await backend.planTrip(origin: _origin, destination: _destination)).first;
     final created = await backend.createBooking(tripPlanId: plan.id, idempotencyKey: 'k1');
     await _wait(120);
     expect((await backend.listBookings()).items.single.status, BookingStatus.failed);
@@ -69,7 +69,7 @@ void main() {
   test('cancel during matching wins over scheduled transitions', () async {
     create(MockBookingScenario.happyPath);
     await backend.recordConsent(granted: true);
-    final plan = (await backend.planTrip(origin: _origin, destination: _destination)).single;
+    final plan = (await backend.planTrip(origin: _origin, destination: _destination)).first;
     final created = await backend.createBooking(tripPlanId: plan.id, idempotencyKey: 'k1');
     final cancelled = await backend.cancelBooking(created.id);
     await _wait(120);

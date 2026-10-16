@@ -73,27 +73,76 @@ class MockBookingBackend implements BookingRepository, BookingRealtime {
       throw const BookingException(BookingFailureCode.noRoute, statusCode: 422);
     }
     final now = _clock();
-    final pickup = _placeholderStop('Titik Jemput Contoh', StopType.virtualStop, origin, now);
-    final dropoff = _placeholderStop('Halte Contoh', StopType.staticStop, destination, now);
     final rideS = distanceM / 6.0; // ~22 km/h
-    final plan = TripPlan(
+    // Placeholder alternatives so the route list has something to compare:
+    // a nearby virtual stop, and a farther static halte on a cheaper corridor.
+    final plans = [
+      _placeholderPlan(
+        origin: origin,
+        destination: destination,
+        corridorId: 'A',
+        pickup: _placeholderStop('Titik Jemput Contoh', StopType.virtualStop, origin, now),
+        dropoff: _placeholderStop('Halte Contoh', StopType.staticStop, destination, now),
+        walkToPickupM: 150,
+        walkFromDropoffM: 0,
+        rideM: distanceM,
+        rideS: rideS,
+        fareIdr: (2000 + (distanceM / 1000 * 1000).round()) * seats,
+        now: now,
+      ),
+      _placeholderPlan(
+        origin: origin,
+        destination: destination,
+        corridorId: 'B',
+        pickup: _placeholderStop('Halte Contoh Utara', StopType.staticStop, origin, now),
+        dropoff: _placeholderStop('Halte Contoh Selatan', StopType.staticStop, destination, now),
+        walkToPickupM: 600,
+        walkFromDropoffM: 200,
+        rideM: distanceM * 1.2,
+        rideS: rideS * 1.2,
+        fareIdr: (1500 + (distanceM / 1000 * 700).round()) * seats,
+        now: now,
+      ),
+    ];
+    for (final plan in plans) {
+      _plans[plan.id] = plan;
+    }
+    return plans;
+  }
+
+  TripPlan _placeholderPlan({
+    required GeoPoint origin,
+    required GeoPoint destination,
+    required String corridorId,
+    required Stop pickup,
+    required Stop dropoff,
+    required double walkToPickupM,
+    required double walkFromDropoffM,
+    required double rideM,
+    required double rideS,
+    required int fareIdr,
+    required DateTime now,
+  }) {
+    const walkSpeedMps = 1.25;
+    final legs = [
+      TripLeg(mode: LegMode.walk, distanceM: walkToPickupM, durationS: walkToPickupM / walkSpeedMps),
+      TripLeg(mode: LegMode.feeder, distanceM: rideM, durationS: rideS),
+      if (walkFromDropoffM > 0)
+        TripLeg(mode: LegMode.walk, distanceM: walkFromDropoffM, durationS: walkFromDropoffM / walkSpeedMps),
+    ];
+    return TripPlan(
       id: _id('plan'),
       origin: origin,
       destination: destination,
-      legs: [
-        const TripLeg(mode: LegMode.walk, distanceM: 150, durationS: 120),
-        TripLeg(mode: LegMode.feeder, distanceM: distanceM, durationS: rideS),
-      ],
-      fareEstimateIdr: (2000 + (distanceM / 1000 * 1000).round()) * seats,
-      etaMinutes: ((120 + rideS) / 60).ceil(),
+      legs: legs,
+      fareEstimateIdr: fareIdr,
+      etaMinutes: (legs.fold<double>(0, (sum, l) => sum + l.durationS) / 60).ceil(),
       pickupStop: pickup,
       dropoffStop: dropoff,
-      corridorId: 'mock',
+      corridorId: corridorId,
       nearestFeederEtaS: scenario == MockBookingScenario.noSupply ? null : 240,
       expiresAt: now.add(const Duration(minutes: 5)),
     );
-    _plans[plan.id] = plan;
-    return [plan];
   }
 
   @override

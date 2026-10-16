@@ -75,6 +75,8 @@ void main() {
 
       await tester.tap(find.text(StubTripLocations.places.first.name));
       await tester.pump();
+      await tester.tap(find.text(BookingStrings.confirmDestination));
+      await tester.pump();
       expect(find.text(BookingStrings.planTitle), findsOneWidget);
       expect(find.text(BookingStrings.rupiah(5000)), findsOneWidget);
 
@@ -93,6 +95,82 @@ void main() {
       await unmount(tester);
     });
 
+    testWidgets('lists route alternatives and books the selected one', (tester) async {
+      await repo.recordConsent(granted: true);
+      final expiresAt = DateTime.now().add(const Duration(minutes: 5));
+      repo.onPlan = () async => [
+            plan(id: 'plan-a', expiresAt: expiresAt),
+            plan(id: 'plan-b', fareIdr: 3500, expiresAt: expiresAt),
+          ];
+      final bookedPlans = <String>[];
+      repo.onCreate = (planId, _) async {
+        bookedPlans.add(planId);
+        return booking(status: BookingStatus.requested);
+      };
+      await pumpHome(tester);
+      await openPlanner(tester);
+
+      await tester.tap(find.text(StubTripLocations.places.first.name));
+      await tester.pump();
+      await tester.tap(find.text(BookingStrings.confirmDestination));
+      await tester.pump();
+      expect(find.text(BookingStrings.planTitle), findsOneWidget);
+      expect(find.text(BookingStrings.routeDetails), findsNWidgets(2));
+
+      await tester.tap(find.text(BookingStrings.rupiah(3500)));
+      await tester.pump();
+      await tester.tap(find.text(BookingStrings.confirmBooking));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 500));
+
+      expect(bookedPlans, ['plan-b']);
+      await unmount(tester);
+    });
+
+    testWidgets('Detail expands the route timeline in place', (tester) async {
+      await repo.recordConsent(granted: true);
+      repo.onPlan = () async => [plan(expiresAt: DateTime.now().add(const Duration(minutes: 5)))];
+      await pumpHome(tester);
+      await openPlanner(tester);
+
+      await tester.tap(find.text(StubTripLocations.places.first.name));
+      await tester.pump();
+      await tester.tap(find.text(BookingStrings.confirmDestination));
+      await tester.pump();
+      final ride = BookingStrings.rideLeg(BookingStrings.minutes(10), BookingStrings.distance(3000));
+      expect(find.text(ride), findsNothing);
+
+      await tester.tap(find.text(BookingStrings.routeDetails));
+      await tester.pumpAndSettle();
+      expect(find.text(ride), findsOneWidget);
+      expect(find.text(StubTripLocations.places.first.name), findsWidgets); // destination row
+
+      await tester.tap(find.text(BookingStrings.hideRouteDetails));
+      await tester.pumpAndSettle();
+      expect(find.text(ride), findsNothing);
+      await unmount(tester);
+    });
+
+    testWidgets('back from the route list returns to destination selection', (tester) async {
+      await repo.recordConsent(granted: true);
+      repo.onPlan = () async => [plan(expiresAt: DateTime.now().add(const Duration(minutes: 5)))];
+      await pumpHome(tester);
+      await openPlanner(tester);
+
+      await tester.tap(find.text(StubTripLocations.places.first.name));
+      await tester.pump();
+      await tester.tap(find.text(BookingStrings.confirmDestination));
+      await tester.pump();
+      expect(find.text(BookingStrings.planTitle), findsOneWidget);
+
+      await tester.binding.handlePopRoute();
+      await tester.pump();
+      expect(find.text(BookingStrings.planTitle), findsNothing);
+      expect(find.text(BookingStrings.confirmDestination), findsOneWidget);
+      expect(controller.plans, isEmpty);
+      await unmount(tester);
+    });
+
     testWidgets('no route shows the error without a retry', (tester) async {
       await repo.recordConsent(granted: true);
       repo.onPlan = () async => throw failure(BookingFailureCode.noRoute);
@@ -100,6 +178,8 @@ void main() {
       await openPlanner(tester);
 
       await tester.tap(find.text(StubTripLocations.places.first.name));
+      await tester.pump();
+      await tester.tap(find.text(BookingStrings.confirmDestination));
       await tester.pump();
 
       expect(find.text(BookingStrings.failure(BookingFailureCode.noRoute)), findsOneWidget);

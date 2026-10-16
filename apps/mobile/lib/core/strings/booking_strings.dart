@@ -13,7 +13,7 @@ class BookingStrings {
   static const bookFeeder = 'Pesan\nFeeder';
   static const routeInfo = 'Info\nRute';
   static const locate = 'Lokasi saya';
-  static const plannerTitle = 'Pesan feeder';
+  static const plannerTitle = 'Rencanakan Perjalanan';
   static String feedersNearby(int count) => '$count FEEDER TERDEKAT';
 
   // Pooling
@@ -22,16 +22,19 @@ class BookingStrings {
   static String poolingSummary(int count) => '$count titik virtual aktif di sekitarmu.';
   static const poolingSummaryGeneric = 'Titik virtual muncul mengikuti permintaan di sekitarmu.';
   static const poolingJoin = 'Gabung pool agar jemputan lebih cepat';
-  static const origin = 'Dari';
-  static const destination = 'Ke';
+  static const origin = 'Asal';
+  static const destination = 'Tujuan';
   static const currentLocation = 'Lokasi saat ini';
   static const originUnavailable = 'Lokasi saat ini belum tersedia.';
   static const retryOrigin = 'Coba lagi';
+  static const originHint = 'Cari lokasi asal';
   static const destinationHint = 'Cari tujuan';
+  static const swapEndpoints = 'Tukar asal dan tujuan';
+  static const suggestedPlaces = 'Saran tempat';
+  static const confirmDestination = 'Konfirmasi Tujuan';
   static const noDestinationMatch = 'Tujuan tidak ditemukan.';
   static const placeholderLocations = 'Data lokasi contoh (belum ada GPS & pencarian alamat)';
   static const findRoute = 'Cari rute';
-  static const changeDestination = 'Ganti tujuan';
   static const planningLoading = 'Mencari rute terbaik...';
 
   // Consent (UU PDP)
@@ -44,13 +47,19 @@ class BookingStrings {
   static String consentPolicy(String version) => 'Versi kebijakan $version';
 
   // Plan
-  static const planTitle = 'Rencana perjalanan';
+  static const planTitle = 'Rute Rekomendasi';
+  static const routeDetails = 'Detail';
+  static const hideRouteDetails = 'Tutup';
+  static String walkLeg(String duration, String distance) => 'Jalan kaki $duration ($distance)';
+  static String rideLeg(String duration, String distance) => 'Naik feeder $duration ($distance)';
+  static String feederArrivesIn(String duration) => 'Feeder terdekat tiba dalam $duration';
+  static const walk = 'Jalan kaki';
+  static String feederLine(String? corridorId) => corridorId == null ? feeder : '$feeder $corridorId';
+  static String pickupAt(String stopName) => 'Jemput di $stopName';
+  static String timeRange(DateTime start, DateTime end) => '${time(start)} – ${time(end)}';
   static const fare = 'Perkiraan tarif';
-  static const travelTime = 'Waktu tempuh';
   static const pickupStop = 'Titik jemput';
   static const dropoffStop = 'Titik turun';
-  static const nearestFeeder = 'Feeder terdekat';
-  static const walkToStop = 'Jalan kaki ke titik jemput';
   static const confirmBooking = 'Pesan sekarang';
   static const planExpiredHint = 'Rencana ini sudah kedaluwarsa. Cari rute lagi.';
   static String planValidUntil(String time) => 'Berlaku sampai $time';
