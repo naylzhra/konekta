@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import '../../core/location/user_location_provider.dart';
 import '../../shared_widgets/konekta_navbar.dart';
 import '../../shared_widgets/konekta_tab_scaffold.dart';
-import '../booking/booking_session.dart';
+import '../booking/ui/booking_scope.dart';
 import '../live_tracking/data/feeder_position_stream.dart';
 import '../live_tracking/state/passenger_map_controller.dart';
 import 'booking_active_trip.dart';
@@ -12,50 +12,51 @@ import 'tabs/map_tab.dart';
 import 'tabs/profile_tab.dart';
 import 'tabs/trips_tab.dart';
 
-/// Owns the passenger's session (DESIGN.md §5.5): the shared WsClient's
-/// connect/dispose and the objects the tabs read from.
-class PassengerMain extends StatefulWidget {
+class PassengerMain extends StatelessWidget {
   const PassengerMain({super.key, required this.token});
 
   final String token;
 
   @override
-  State<PassengerMain> createState() => _PassengerMainState();
+  Widget build(BuildContext context) {
+    return BookingScope(token: token, child: const _PassengerTabs());
+  }
 }
 
-class _PassengerMainState extends State<PassengerMain> {
-  late final BookingSession _session;
-  late final BookingDependencies _booking;
-  late final WsFeederPositionStream _feederPositions;
-  late final BookingActiveTrip _activeTrip;
-  late final PassengerMapController _map;
+class _PassengerTabs extends StatefulWidget {
+  const _PassengerTabs();
 
   @override
-  void initState() {
-    super.initState();
-    _session = BookingSession.create(token: widget.token);
-    _booking = BookingDependencies.create(_session);
-    _feederPositions = WsFeederPositionStream(_session.wsClient);
-    _activeTrip = BookingActiveTrip(_booking.booking);
+  State<_PassengerTabs> createState() => _PassengerTabsState();
+}
+
+class _PassengerTabsState extends State<_PassengerTabs> {
+  WsFeederPositionStream? _feederPositions;
+  BookingActiveTrip? _activeTrip;
+  PassengerMapController? _map;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_map != null) return;
+    final scope = BookingScope.of(context);
+    final wsClient = scope.session.wsClient;
+    final feederPositions = _feederPositions = WsFeederPositionStream(wsClient);
+    final activeTrip = _activeTrip = BookingActiveTrip(scope.dependencies.booking);
     _map = PassengerMapController(
-      trip: _activeTrip,
-      positions: _feederPositions,
+      trip: activeTrip,
+      positions: feederPositions,
       location: GeolocatorUserLocationProvider(),
-      connection: _session.wsClient.states,
-      initialConnection: _session.wsClient.state,
-    );
-    _session.wsClient.connect();
-    _booking.booking.start();
-    _map.start();
+      connection: wsClient.states,
+      initialConnection: wsClient.state,
+    )..start();
   }
 
   @override
   void dispose() {
-    _map.dispose();
-    _activeTrip.dispose();
-    _booking.dispose();
-    _feederPositions.dispose();
-    _session.wsClient.dispose();
+    _map?.dispose();
+    _activeTrip?.dispose();
+    _feederPositions?.dispose();
     super.dispose();
   }
 
@@ -72,7 +73,7 @@ class _PassengerMainState extends State<PassengerMain> {
         KonektaNavItem(icon: Icons.map_outlined, selectedIcon: Icons.map, label: 'Map'),
         KonektaNavItem(icon: Icons.person_outline, selectedIcon: Icons.person, label: 'Profile'),
       ],
-      tabs: [const HomeTab(), const TripsTab(), MapTab(controller: _map), const ProfileTab()],
+      tabs: [const HomeTab(), const TripsTab(), MapTab(controller: _map!), const ProfileTab()],
     );
   }
 }

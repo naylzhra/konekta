@@ -81,36 +81,38 @@ class _NavButton extends StatelessWidget {
       child: InkWell(
         onTap: onTap,
         borderRadius: BorderRadius.circular(AppRadius.lg),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: AppSpacing.base),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              AnimatedContainer(
-                duration: const Duration(milliseconds: 200),
-                curve: Curves.easeOut,
-                width: 56,
-                height: 32,
-                decoration: BoxDecoration(
-                  color: selected ? AppColors.primaryContainer : Colors.transparent,
-                  borderRadius: BorderRadius.circular(AppRadius.full),
-                ),
-                child: Icon(
+        // heightFactor: 1 keeps the bar as tall as the pill; without it the
+        // Center fills the Scaffold's loose height and hides the tab body.
+        child: Center(
+          heightFactor: 1,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 200),
+            curve: Curves.easeOut,
+            width: 64,
+            height: 52,
+            decoration: BoxDecoration(
+              color: selected ? AppColors.primaryContainer : Colors.transparent,
+              borderRadius: BorderRadius.circular(AppRadius.xl),
+            ),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(
                   selected ? item.selectedIcon : item.icon,
                   size: 24,
-                  color: selected ? AppColors.onPrimary : AppColors.onSurface,
+                  color: selected ? AppColors.onPrimary : AppColors.inverseSurface,
                 ),
-              ),
-              const SizedBox(height: AppSpacing.base),
-              Text(
-                item.label,
-                style: AppTextStyles.labelMd.copyWith(
-                  letterSpacing: 0,
-                  fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-                  color: selected ? AppColors.primary : AppColors.onSurface,
+                const SizedBox(height: 2),
+                Text(
+                  item.label,
+                  style: AppTextStyles.labelMd.copyWith(
+                    letterSpacing: 0,
+                    fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                    color: selected ? AppColors.onPrimary : AppColors.inverseSurface,
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
