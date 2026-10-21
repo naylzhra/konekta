@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../core/location/user_location_provider.dart';
+import '../../core/strings/account_strings.dart';
 import '../../shared_widgets/konekta_navbar.dart';
 import '../../shared_widgets/konekta_tab_scaffold.dart';
 import '../booking/ui/booking_scope.dart';
@@ -45,7 +46,8 @@ class _PassengerTabsState extends State<_PassengerTabs> {
     final scope = BookingScope.of(context);
     final wsClient = scope.session.wsClient;
     final feederPositions = _feederPositions = WsFeederPositionStream(wsClient);
-    final activeTrip = _activeTrip = BookingActiveTrip(scope.dependencies.booking);
+    final activeTrip =
+        _activeTrip = BookingActiveTrip(scope.dependencies.booking);
     _map = PassengerMapController(
       trip: activeTrip,
       positions: feederPositions,
@@ -76,14 +78,21 @@ class _PassengerTabsState extends State<_PassengerTabs> {
   Widget build(BuildContext context) {
     return KonektaTabScaffold(
       items: const [
-        KonektaNavItem(icon: Icons.home_outlined, selectedIcon: Icons.home, label: 'Home'),
+        KonektaNavItem(
+            icon: Icons.home_outlined,
+            selectedIcon: Icons.home,
+            label: 'Beranda'),
         KonektaNavItem(
           icon: Icons.directions_bus_outlined,
           selectedIcon: Icons.directions_bus,
-          label: 'Trips',
+          label: 'Perjalanan',
         ),
-        KonektaNavItem(icon: Icons.map_outlined, selectedIcon: Icons.map, label: 'Map'),
-        KonektaNavItem(icon: Icons.person_outline, selectedIcon: Icons.person, label: 'Profile'),
+        KonektaNavItem(
+            icon: Icons.map_outlined, selectedIcon: Icons.map, label: 'Peta'),
+        KonektaNavItem(
+            icon: Icons.person_outline,
+            selectedIcon: Icons.person,
+            label: AccountStrings.profile),
       ],
       tabs: [
         HomeTab(map: _map!, fleet: _fleet!),

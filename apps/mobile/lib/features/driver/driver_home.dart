@@ -6,13 +6,18 @@ import 'package:latlong2/latlong.dart';
 
 import '../../core/api/api_client.dart';
 import '../../core/location/user_location_provider.dart';
+import '../../core/strings/account_strings.dart';
 import '../../core/strings/live_tracking_strings.dart';
 import '../../core/theme/konekta_theme.dart';
+import '../../shared_widgets/konekta_navbar.dart';
+import '../../shared_widgets/konekta_tab_scaffold.dart';
 import '../../shared_widgets/loading_indicator.dart';
+import '../account/account_page.dart';
 import '../live_tracking/data/feeder_api.dart';
 import '../live_tracking/state/driver_duty_controller.dart';
 import '../live_tracking/ui/map_markers.dart';
 import '../live_tracking/ui/service_area_map.dart';
+import 'driver_stops_tab.dart';
 
 class DriverHome extends StatefulWidget {
   const DriverHome({super.key, required this.token});
@@ -32,8 +37,11 @@ class _DriverHomeState extends State<DriverHome> {
   @override
   void initState() {
     super.initState();
-    _location = GeolocatorUserLocationProvider(settings: _dutyLocationSettings())..rationale = _showRationale;
-    _duty = DriverDutyController(api: FeederApi(ApiClient()), token: widget.token, location: _location)
+    _location =
+        GeolocatorUserLocationProvider(settings: _dutyLocationSettings())
+          ..rationale = _showRationale;
+    _duty = DriverDutyController(
+        api: FeederApi(ApiClient()), token: widget.token, location: _location)
       ..addListener(_followDriver)
       ..load();
   }
@@ -93,6 +101,42 @@ class _DriverHomeState extends State<DriverHome> {
 
   @override
   Widget build(BuildContext context) {
+    return KonektaTabScaffold(
+      items: const [
+        KonektaNavItem(
+            icon: Icons.map_outlined, selectedIcon: Icons.map, label: 'Dinas'),
+        KonektaNavItem(
+            icon: Icons.route_outlined,
+            selectedIcon: Icons.route,
+            label: 'Halte'),
+        KonektaNavItem(
+            icon: Icons.person_outline,
+            selectedIcon: Icons.person,
+            label: AccountStrings.profile),
+      ],
+      tabs: [
+        _dutyHome(),
+        ListenableBuilder(
+          listenable: _duty,
+          builder: (context, _) =>
+              DriverStopsTab(token: widget.token, feederId: _duty.feeder?.id),
+        ),
+        ListenableBuilder(
+          listenable: _duty,
+          builder: (context, _) => AccountPage(
+              token: widget.token,
+              role: 'driver',
+              feederLabel: _duty.feeder == null
+                  ? null
+                  : LiveTrackingStrings.feederLabel(
+                      _duty.feeder!.number, _duty.feeder!.corridorName),
+              beforeLogout: () => _duty.stopDuty()),
+        ),
+      ],
+    );
+  }
+
+  Widget _dutyHome() {
     return Scaffold(
       appBar: AppBar(title: const Text(LiveTrackingStrings.driverTitle)),
       body: ListenableBuilder(
@@ -103,9 +147,12 @@ class _DriverHomeState extends State<DriverHome> {
               text: _duty.issue == DutyIssue.sessionExpired
                   ? LiveTrackingStrings.sessionExpired
                   : LiveTrackingStrings.loadFailed,
-              action: TextButton(onPressed: _duty.load, child: const Text(LiveTrackingStrings.retry)),
+              action: TextButton(
+                  onPressed: _duty.load,
+                  child: const Text(LiveTrackingStrings.retry)),
             ),
-          DutyStatus.noFeeder => const _Message(text: LiveTrackingStrings.noFeeder),
+          DutyStatus.noFeeder =>
+            const _Message(text: LiveTrackingStrings.noFeeder),
           _ => Column(
               children: [
                 Expanded(
@@ -115,7 +162,8 @@ class _DriverHomeState extends State<DriverHome> {
                     markers: [
                       if (_duty.lastLocation != null)
                         Marker(
-                          point: LatLng(_duty.lastLocation!.lat, _duty.lastLocation!.lng),
+                          point: LatLng(
+                              _duty.lastLocation!.lat, _duty.lastLocation!.lng),
                           width: FeederMarker.size,
                           height: FeederMarker.size,
                           child: const FeederMarker(),
@@ -150,15 +198,21 @@ class _DutyPanel extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             if (feeder != null)
-              Text(LiveTrackingStrings.feederLabel(feeder.number, feeder.corridorName), style: AppTextStyles.headlineMd),
+              Text(
+                  LiveTrackingStrings.feederLabel(
+                      feeder.number, feeder.corridorName),
+                  style: AppTextStyles.headlineMd),
             const SizedBox(height: AppSpacing.xs),
             Text(_statusText(), style: AppTextStyles.bodyMd),
             if (issue != null) ...[
               const SizedBox(height: AppSpacing.xs),
-              Text(issue, style: AppTextStyles.bodySm.copyWith(color: AppColors.error)),
+              Text(issue,
+                  style: AppTextStyles.bodySm.copyWith(color: AppColors.error)),
             ],
             if (duty.issue == DutyIssue.permissionDeniedForever)
-              const TextButton(onPressed: Geolocator.openAppSettings, child: Text(LiveTrackingStrings.openSettings)),
+              const TextButton(
+                  onPressed: Geolocator.openAppSettings,
+                  child: Text(LiveTrackingStrings.openSettings)),
             if (duty.issue == DutyIssue.locationServiceDisabled)
               const TextButton(
                 onPressed: Geolocator.openLocationSettings,
@@ -171,8 +225,12 @@ class _DutyPanel extends StatelessWidget {
                 DutyStatus.onDuty => duty.stopDuty,
                 _ => null,
               },
-              style: duty.isOnDuty ? ElevatedButton.styleFrom(backgroundColor: AppColors.error) : null,
-              child: Text(duty.isOnDuty ? LiveTrackingStrings.stopDuty : LiveTrackingStrings.startDuty),
+              style: duty.isOnDuty
+                  ? ElevatedButton.styleFrom(backgroundColor: AppColors.error)
+                  : null,
+              child: Text(duty.isOnDuty
+                  ? LiveTrackingStrings.stopDuty
+                  : LiveTrackingStrings.startDuty),
             ),
           ],
         ),
@@ -186,21 +244,26 @@ class _DutyPanel extends StatelessWidget {
         return LiveTrackingStrings.starting;
       case DutyStatus.onDuty:
         final sent = duty.lastSentAt;
-        if (sent == null) return '${LiveTrackingStrings.onDuty}\n${LiveTrackingStrings.waitingFirstFix}';
+        if (sent == null) {
+          return '${LiveTrackingStrings.onDuty}\n${LiveTrackingStrings.waitingFirstFix}';
+        }
         return '${LiveTrackingStrings.onDuty}\n${LiveTrackingStrings.lastSent(_clock(sent.toLocal()))}';
       default:
         return LiveTrackingStrings.offDuty;
     }
   }
 
-  static String _clock(DateTime t) =>
-      [t.hour, t.minute, t.second].map((v) => v.toString().padLeft(2, '0')).join(':');
+  static String _clock(DateTime t) => [t.hour, t.minute, t.second]
+      .map((v) => v.toString().padLeft(2, '0'))
+      .join(':');
 
   static String? _issueText(DutyIssue issue) => switch (issue) {
         DutyIssue.none => null,
         DutyIssue.permissionDenied => LiveTrackingStrings.permissionDenied,
-        DutyIssue.permissionDeniedForever => LiveTrackingStrings.permissionDeniedForever,
-        DutyIssue.locationServiceDisabled => LiveTrackingStrings.locationServiceDisabled,
+        DutyIssue.permissionDeniedForever =>
+          LiveTrackingStrings.permissionDeniedForever,
+        DutyIssue.locationServiceDisabled =>
+          LiveTrackingStrings.locationServiceDisabled,
         DutyIssue.outsideServiceArea => LiveTrackingStrings.outsideServiceArea,
         DutyIssue.weakGps => LiveTrackingStrings.weakGps,
         DutyIssue.sendFailed => LiveTrackingStrings.sendFailed,
@@ -222,8 +285,12 @@ class _Message extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text(text, style: AppTextStyles.bodyMd, textAlign: TextAlign.center),
-            if (action != null) ...[const SizedBox(height: AppSpacing.md), action!],
+            Text(text,
+                style: AppTextStyles.bodyMd, textAlign: TextAlign.center),
+            if (action != null) ...[
+              const SizedBox(height: AppSpacing.md),
+              action!
+            ],
           ],
         ),
       ),

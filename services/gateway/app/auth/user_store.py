@@ -1,5 +1,6 @@
 # Postgres-backed user lookups for phone number + password auth.
 from typing import Optional
+from uuid import UUID
 
 import asyncpg
 
@@ -36,3 +37,27 @@ async def create_user(
 async def set_user_status(user_id: str, status: str) -> None:
     pool = await get_pool()
     await pool.execute("UPDATE users SET status = $1 WHERE id = $2", status, user_id)
+
+
+async def get_profile(user_id: str) -> Optional[dict]:
+    pool = await get_pool()
+    row = await pool.fetchrow(
+        "SELECT id, phone_number, display_name, role, status FROM users WHERE id = $1",
+        UUID(user_id),
+    )
+    return dict(row) if row else None
+
+
+async def update_profile(user_id: str, phone_number: str, display_name: Optional[str]) -> dict:
+    pool = await get_pool()
+    row = await pool.fetchrow(
+        """UPDATE users SET phone_number = $2, display_name = $3 WHERE id = $1
+        RETURNING id, phone_number, display_name, role, status""",
+        UUID(user_id), phone_number, display_name,
+    )
+    return dict(row)
+
+
+async def update_password(user_id: str, password_hash: str) -> None:
+    pool = await get_pool()
+    await pool.execute("UPDATE users SET password_hash = $2 WHERE id = $1", UUID(user_id), password_hash)
