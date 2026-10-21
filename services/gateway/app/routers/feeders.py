@@ -1,0 +1,84 @@
+# Live tracking REST (DESIGN.md §5.8). Drivers report their position here;
+# subscribers receive it as `feeder.position` over the WS hub (§5.1).
+from typing import NoReturn, Optional
+from uuid import UUID
+
+from fastapi import APIRouter, Depends, HTTPException, Response, status
+
+from app.auth.dependencies import get_current_session, require_role
+from app.feeders.dependencies import get_feeder_repository, get_feeder_service
+from app.feeders.models import (
+    AssignedFeeder,
+    CorridorList,
+    FeederError,
+    LiveFeeder,
+    LiveFeederList,
+    PositionAccepted,
+    PositionReport,
+)
+from app.feeders.repository import FeederRepository
+from app.feeders.service import FeederTrackingService
+
+router = APIRouter(tags=["feeders"])
+
+require_driver = require_role("driver")
+
+
+def _http_error(exc: FeederError) -> NoReturn:
+    raise HTTPException(exc.status_code, detail={"code": exc.code.value, "message": exc.message}) from exc
+
+
+def _driver_id(session: dict) -> UUID:
+    return UUID(session["user_id"])
+
+
+# Public: the registration form lists feeders before the driver has an account.
+@router.get("/corridors", response_model=CorridorList)
+async def list_corridors(repository: FeederRepository = Depends(get_feeder_repository)) -> CorridorList:
+    return CorridorList(items=await repository.list_corridors())
+
+
+# Snapshot for the passenger map; live updates follow on corridor:<id> topics.
+@router.get("/feeders/live", response_model=LiveFeederList)
+async def live_feeders(
+    corridor_id: Optional[str] = None,
+    _session: dict = Depends(get_current_session),
+    service: FeederTrackingService = Depends(get_feeder_service),
+) -> LiveFeederList:
+    positions = await service.live_feeders(corridor_id)
+    return LiveFeederList(items=[LiveFeeder.model_validate(p.model_dump()) for p in positions])
+
+
+@router.get("/feeders/me", response_model=AssignedFeeder)
+async def my_feeder(
+    session: dict = Depends(require_driver),
+    service: FeederTrackingService = Depends(get_feeder_service),
+) -> AssignedFeeder:
+    try:
+        return await service.assigned_feeder(_driver_id(session))
+    except FeederError as exc:
+        _http_error(exc)
+
+
+@router.post("/feeders/me/position", response_model=PositionAccepted)
+async def report_position(
+    report: PositionReport,
+    session: dict = Depends(require_driver),
+    service: FeederTrackingService = Depends(get_feeder_service),
+) -> PositionAccepted:
+    try:
+        return await service.report_position(_driver_id(session), report)
+    except FeederError as exc:
+        _http_error(exc)
+
+
+@router.post("/feeders/me/offline", status_code=status.HTTP_204_NO_CONTENT)
+async def go_offline(
+    session: dict = Depends(require_driver),
+    service: FeederTrackingService = Depends(get_feeder_service),
+) -> Response:
+    try:
+        await service.go_offline(_driver_id(session))
+    except FeederError as exc:
+        _http_error(exc)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

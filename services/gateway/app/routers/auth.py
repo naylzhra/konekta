@@ -1,4 +1,4 @@
-from typing import Literal
+from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
@@ -6,6 +6,8 @@ from pydantic import BaseModel
 from app.auth import session_store, user_store
 from app.auth.dependencies import get_current_session, require_role
 from app.auth.passwords import hash_password, verify_password
+from app.db import get_pool
+from app.feeders.repository import claim_feeder
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -17,6 +19,9 @@ class RegisterRequest(BaseModel):
     phone_number: str
     password: str
     role: Literal["passenger", "driver"]
+    # Drivers pick their feeder at registration (GET /corridors lists them);
+    # required for drivers, rejected for passengers.
+    feeder_id: Optional[str] = None
 
 
 class LoginRequest(BaseModel):
@@ -43,8 +48,21 @@ async def register(payload: RegisterRequest) -> AuthResponse:
             status_code=status.HTTP_409_CONFLICT,
             detail="Phone number already registered",
         )
+    if (payload.role == "driver") != (payload.feeder_id is not None):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Feeder is required for drivers only",
+        )
     password_hash = hash_password(payload.password)
-    user = await user_store.create_user(payload.phone_number, password_hash, payload.role)
+    pool = await get_pool()
+    async with pool.acquire() as conn, conn.transaction():
+        user = await user_store.create_user(payload.phone_number, password_hash, payload.role, conn=conn)
+        # Raising inside the transaction rolls back the new user too.
+        if payload.feeder_id is not None and not await claim_feeder(conn, payload.feeder_id, user["id"]):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Feeder not available",
+            )
     token = await session_store.create_session(str(user["id"]), user["role"])
     return AuthResponse(token=token, role=user["role"])
 

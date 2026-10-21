@@ -2,7 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../core/api/api_client.dart';
+import '../../core/strings/live_tracking_strings.dart';
 import '../../core/theme/konekta_theme.dart';
+import '../live_tracking/data/feeder_api.dart';
+import '../live_tracking/domain/feeder_models.dart';
 import '../../shared_widgets/password_field.dart';
 import 'auth_validators.dart';
 import 'role_router.dart';
@@ -14,7 +17,8 @@ const _roleOptions = {
   'Penumpang': 'passenger',
 };
 
-// TODO: add specific role form field
+const _driverRole = 'driver';
+
 class RegisterScreen extends StatefulWidget {
   const RegisterScreen({super.key, required this.apiClient});
 
@@ -39,6 +43,16 @@ class _RegisterScreenState extends State<RegisterScreen> {
   String? _phoneError;
   String? _passwordError;
   String? _confirmPasswordError;
+
+  // Driver-only: the feeder this account drives (DESIGN.md §5.8).
+  late final _feederApi = FeederApi(widget.apiClient);
+  List<CorridorOption>? _corridors;
+  bool _corridorsLoading = false;
+  bool _corridorsFailed = false;
+  String? _selectedCorridorId;
+  String? _selectedFeederId;
+
+  bool get _isDriver => _selectedRoleLabel != null && _roleOptions[_selectedRoleLabel] == _driverRole;
 
   @override
   void initState() {
@@ -116,9 +130,38 @@ class _RegisterScreenState extends State<RegisterScreen> {
     _submit();
   }
 
+  void _onRoleChanged(String label) {
+    setState(() {
+      _selectedRoleLabel = label;
+      _formError = null;
+    });
+    if (_isDriver && _corridors == null && !_corridorsLoading) _loadCorridors();
+  }
+
+  Future<void> _loadCorridors() async {
+    setState(() {
+      _corridorsLoading = true;
+      _corridorsFailed = false;
+    });
+    try {
+      final corridors = await _feederApi.listCorridors();
+      if (!mounted) return;
+      setState(() => _corridors = corridors);
+    } on FeederApiException {
+      if (!mounted) return;
+      setState(() => _corridorsFailed = true);
+    } finally {
+      if (mounted) setState(() => _corridorsLoading = false);
+    }
+  }
+
   Future<void> _submit() async {
     if (_selectedRoleLabel == null) {
       setState(() => _formError = 'Pilih jenis pengguna');
+      return;
+    }
+    if (_isDriver && _selectedFeederId == null) {
+      setState(() => _formError = LiveTrackingStrings.chooseFeeder);
       return;
     }
 
@@ -132,11 +175,21 @@ class _RegisterScreenState extends State<RegisterScreen> {
         phoneNumber: '+62${_phoneController.text.trim()}',
         password: _passwordController.text,
         role: _roleOptions[_selectedRoleLabel]!,
+        feederId: _isDriver ? _selectedFeederId : null,
       );
       if (!mounted) return;
       routeByRole(context, result);
     } catch (e) {
-      setState(() => _formError = friendlyAuthError(e));
+      final feederTaken = e is AuthException && e.message.contains('Feeder not available');
+      setState(() {
+        _formError = friendlyAuthError(e);
+        if (feederTaken) {
+          // Someone else took it meanwhile; refresh the list.
+          _selectedFeederId = null;
+          _corridors = null;
+        }
+      });
+      if (feederTaken) _loadCorridors();
     } finally {
       if (mounted) setState(() => _isSubmitting = false);
     }
@@ -221,9 +274,30 @@ class _RegisterScreenState extends State<RegisterScreen> {
           },
         );
       default:
-        return _RoleStep(
-          selectedLabel: _selectedRoleLabel,
-          onChanged: (label) => setState(() => _selectedRoleLabel = label),
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _RoleStep(selectedLabel: _selectedRoleLabel, onChanged: _onRoleChanged),
+            if (_isDriver) ...[
+              const SizedBox(height: AppSpacing.lg),
+              _FeederPicker(
+                corridors: _corridors,
+                loading: _corridorsLoading,
+                failed: _corridorsFailed,
+                selectedCorridorId: _selectedCorridorId,
+                selectedFeederId: _selectedFeederId,
+                onRetry: _loadCorridors,
+                onCorridorChanged: (id) => setState(() {
+                  _selectedCorridorId = id;
+                  _selectedFeederId = null;
+                }),
+                onFeederChanged: (id) => setState(() {
+                  _selectedFeederId = id;
+                  _formError = null;
+                }),
+              ),
+            ],
+          ],
         );
     }
   }
@@ -358,6 +432,88 @@ class _RoleStep extends StatelessWidget {
             if (value != null) onChanged(value);
           },
         ),
+      ],
+    );
+  }
+}
+
+class _FeederPicker extends StatelessWidget {
+  const _FeederPicker({
+    required this.corridors,
+    required this.loading,
+    required this.failed,
+    required this.selectedCorridorId,
+    required this.selectedFeederId,
+    required this.onRetry,
+    required this.onCorridorChanged,
+    required this.onFeederChanged,
+  });
+
+  final List<CorridorOption>? corridors;
+  final bool loading;
+  final bool failed;
+  final String? selectedCorridorId;
+  final String? selectedFeederId;
+  final VoidCallback onRetry;
+  final ValueChanged<String> onCorridorChanged;
+  final ValueChanged<String> onFeederChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final corridors = this.corridors;
+    if (loading) return const Center(child: CircularProgressIndicator());
+    if (failed || corridors == null) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            LiveTrackingStrings.corridorsLoadFailed,
+            style: AppTextStyles.bodySm.copyWith(color: AppColors.error),
+          ),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton(onPressed: onRetry, child: const Text(LiveTrackingStrings.retry)),
+          ),
+        ],
+      );
+    }
+
+    final corridor = corridors.where((c) => c.id == selectedCorridorId).firstOrNull;
+    final feeders = corridor?.availableFeeders ?? const <FeederOption>[];
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const Text(LiveTrackingStrings.corridorLabel, style: AppTextStyles.bodyMd),
+        const SizedBox(height: AppSpacing.xs),
+        DropdownButtonFormField<String>(
+          initialValue: corridor?.id,
+          hint: const Text(LiveTrackingStrings.corridorHint),
+          items: [for (final c in corridors) DropdownMenuItem(value: c.id, child: Text(c.name))],
+          onChanged: (value) {
+            if (value != null) onCorridorChanged(value);
+          },
+        ),
+        if (corridor != null) ...[
+          const SizedBox(height: AppSpacing.lg),
+          const Text(LiveTrackingStrings.feederLabelField, style: AppTextStyles.bodyMd),
+          const SizedBox(height: AppSpacing.xs),
+          if (feeders.isEmpty)
+            const Text(LiveTrackingStrings.noFeederAvailable, style: AppTextStyles.bodySm)
+          else
+            DropdownButtonFormField<String>(
+              // Keyed by corridor so switching corridors resets the selection.
+              key: ValueKey(corridor.id),
+              initialValue: feeders.any((f) => f.id == selectedFeederId) ? selectedFeederId : null,
+              hint: const Text(LiveTrackingStrings.feederHint),
+              items: [
+                for (final f in feeders)
+                  DropdownMenuItem(value: f.id, child: Text(LiveTrackingStrings.feederOption(f.number, f.capacity))),
+              ],
+              onChanged: (value) {
+                if (value != null) onFeederChanged(value);
+              },
+            ),
+        ],
       ],
     );
   }

@@ -4,15 +4,18 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.bookings.dependencies import start_background, stop_background
 from app.db import close_pool, get_pool
-from app.routers import auth, health
+from app.routers import auth, bookings, consents, driver_stops, feeders, health
 from app.websocket.manager import router as websocket_router
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     await get_pool()
+    await start_background()
     yield
+    await stop_background()
     await close_pool()
 
 
@@ -29,4 +32,8 @@ app.add_middleware(
 
 app.include_router(health.router)
 app.include_router(auth.router)
+app.include_router(bookings.router)
+app.include_router(consents.router)
+app.include_router(driver_stops.router)
+app.include_router(feeders.router)
 app.include_router(websocket_router)
