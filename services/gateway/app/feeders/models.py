@@ -37,6 +37,17 @@ class CorridorList(BaseModel):
     items: list[CorridorWithFeeders]
 
 
+class RouteStop(BaseModel):
+    position: int
+    name: str
+
+
+class CorridorStops(BaseModel):
+    id: str
+    name: str
+    items: list[RouteStop]
+
+
 class AssignedFeeder(BaseModel):
     id: str
     number: int

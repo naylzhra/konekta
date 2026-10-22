@@ -1,7 +1,11 @@
 library;
 
 class FeederOption {
-  const FeederOption({required this.id, required this.number, required this.capacity, required this.available});
+  const FeederOption(
+      {required this.id,
+      required this.number,
+      required this.capacity,
+      required this.available});
 
   factory FeederOption.fromJson(Map<String, dynamic> json) => FeederOption(
         id: json['id'] as String,
@@ -19,13 +23,15 @@ class FeederOption {
 }
 
 class CorridorOption {
-  const CorridorOption({required this.id, required this.name, required this.feeders});
+  const CorridorOption(
+      {required this.id, required this.name, required this.feeders});
 
   factory CorridorOption.fromJson(Map<String, dynamic> json) => CorridorOption(
         id: json['id'] as String,
         name: json['name'] as String,
         feeders: [
-          for (final feeder in json['feeders'] as List<dynamic>) FeederOption.fromJson(feeder as Map<String, dynamic>),
+          for (final feeder in json['feeders'] as List<dynamic>)
+            FeederOption.fromJson(feeder as Map<String, dynamic>),
         ],
       );
 
@@ -33,7 +39,39 @@ class CorridorOption {
   final String name;
   final List<FeederOption> feeders;
 
-  List<FeederOption> get availableFeeders => feeders.where((f) => f.available).toList();
+  List<FeederOption> get availableFeeders =>
+      feeders.where((f) => f.available).toList();
+}
+
+class CorridorRouteStop {
+  const CorridorRouteStop({required this.position, required this.name});
+
+  factory CorridorRouteStop.fromJson(Map<String, dynamic> json) =>
+      CorridorRouteStop(
+        position: json['position'] as int,
+        name: json['name'] as String,
+      );
+
+  final int position;
+  final String name;
+}
+
+class CorridorRoute {
+  const CorridorRoute(
+      {required this.id, required this.name, required this.stops});
+
+  factory CorridorRoute.fromJson(Map<String, dynamic> json) => CorridorRoute(
+        id: json['id'] as String,
+        name: json['name'] as String,
+        stops: [
+          for (final item in json['items'] as List<dynamic>)
+            CorridorRouteStop.fromJson(item as Map<String, dynamic>),
+        ],
+      );
+
+  final String id;
+  final String name;
+  final List<CorridorRouteStop> stops;
 }
 
 class AssignedFeeder {

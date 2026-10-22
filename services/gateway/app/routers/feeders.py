@@ -10,6 +10,7 @@ from app.feeders.dependencies import get_feeder_repository, get_feeder_service
 from app.feeders.models import (
     AssignedFeeder,
     CorridorList,
+    CorridorStops,
     FeederError,
     LiveFeeder,
     LiveFeederList,
@@ -36,6 +37,16 @@ def _driver_id(session: dict) -> UUID:
 @router.get("/corridors", response_model=CorridorList)
 async def list_corridors(repository: FeederRepository = Depends(get_feeder_repository)) -> CorridorList:
     return CorridorList(items=await repository.list_corridors())
+
+
+@router.get("/corridors/{corridor_id}/stops", response_model=CorridorStops)
+async def corridor_stops(
+    corridor_id: str, repository: FeederRepository = Depends(get_feeder_repository)
+) -> CorridorStops:
+    route = await repository.route_stops(corridor_id)
+    if route is None:
+        raise HTTPException(status_code=404, detail="Corridor not found")
+    return route
 
 
 # Snapshot for the passenger map; live updates follow on corridor:<id> topics.

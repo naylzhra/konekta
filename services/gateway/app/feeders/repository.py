@@ -3,7 +3,7 @@ from uuid import UUID
 
 import asyncpg
 
-from app.feeders.models import AssignedFeeder, CorridorWithFeeders, FeederOption
+from app.feeders.models import AssignedFeeder, CorridorStops, CorridorWithFeeders, FeederOption, RouteStop
 
 
 class FeederRepository:
@@ -30,6 +30,19 @@ class FeederRepository:
                 FeederOption(id=row["id"], number=row["number"], capacity=row["capacity"], available=row["available"])
             )
         return list(corridors.values())
+
+    async def route_stops(self, corridor_id: str) -> Optional[CorridorStops]:
+        corridor = await self._pool.fetchrow("SELECT id, name FROM corridors WHERE id = $1", corridor_id)
+        if corridor is None:
+            return None
+        rows = await self._pool.fetch(
+            "SELECT position, name FROM corridor_route_stops WHERE corridor_id = $1 ORDER BY position",
+            corridor_id,
+        )
+        return CorridorStops(
+            id=corridor["id"], name=corridor["name"],
+            items=[RouteStop(position=row["position"], name=row["name"]) for row in rows],
+        )
 
     async def get_for_driver(self, driver_id: UUID) -> Optional[AssignedFeeder]:
         row = await self._pool.fetchrow(

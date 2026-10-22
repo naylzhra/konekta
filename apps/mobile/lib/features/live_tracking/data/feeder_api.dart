@@ -27,22 +27,30 @@ class FeederApi {
   Future<List<CorridorOption>> listCorridors() async {
     final body = await _request('GET', '/corridors');
     return [
-      for (final item in (body as Map<String, dynamic>)['items'] as List<dynamic>)
+      for (final item
+          in (body as Map<String, dynamic>)['items'] as List<dynamic>)
         CorridorOption.fromJson(item as Map<String, dynamic>),
     ];
   }
+
+  Future<CorridorRoute> routeStops(String corridorId) async =>
+      CorridorRoute.fromJson(
+          await _request('GET', '/corridors/$corridorId/stops')
+              as Map<String, dynamic>);
 
   /// Every feeder currently on duty; live updates follow on `corridor:<id>`.
   Future<List<FeederPosition>> liveFeeders(String token) async {
     final body = await _request('GET', '/feeders/live', token: token);
     return [
-      for (final item in (body as Map<String, dynamic>)['items'] as List<dynamic>)
+      for (final item
+          in (body as Map<String, dynamic>)['items'] as List<dynamic>)
         FeederPosition.fromJson(item as Map<String, dynamic>),
     ];
   }
 
   Future<AssignedFeeder> myFeeder(String token) async =>
-      AssignedFeeder.fromJson(await _request('GET', '/feeders/me', token: token) as Map<String, dynamic>);
+      AssignedFeeder.fromJson(await _request('GET', '/feeders/me', token: token)
+          as Map<String, dynamic>);
 
   Future<DateTime> reportPosition(
     String token, {
@@ -63,10 +71,12 @@ class FeederApi {
       },
       timeout: const Duration(seconds: 5),
     );
-    return DateTime.parse((body as Map<String, dynamic>)['updated_at'] as String);
+    return DateTime.parse(
+        (body as Map<String, dynamic>)['updated_at'] as String);
   }
 
-  Future<void> goOffline(String token) => _request('POST', '/feeders/me/offline', token: token);
+  Future<void> goOffline(String token) =>
+      _request('POST', '/feeders/me/offline', token: token);
 
   Future<Object?> _request(
     String method,
@@ -77,16 +87,21 @@ class FeederApi {
   }) async {
     final ApiResponse response;
     try {
-      response = await _api.send(method, path, token: token, body: body, timeout: timeout);
+      response = await _api.send(method, path,
+          token: token, body: body, timeout: timeout);
     } on ApiTransportException {
       throw const FeederApiException(FeederApiException.offline);
     }
     if (response.isSuccess) return response.body;
     if (response.statusCode == 401) {
-      throw FeederApiException(FeederApiException.unauthorized, statusCode: response.statusCode);
+      throw FeederApiException(FeederApiException.unauthorized,
+          statusCode: response.statusCode);
     }
-    final detail = response.body is Map<String, dynamic> ? (response.body as Map<String, dynamic>)['detail'] : null;
+    final detail = response.body is Map<String, dynamic>
+        ? (response.body as Map<String, dynamic>)['detail']
+        : null;
     final code = detail is Map<String, dynamic> ? detail['code'] : null;
-    throw FeederApiException(code is String ? code : FeederApiException.unknown, statusCode: response.statusCode);
+    throw FeederApiException(code is String ? code : FeederApiException.unknown,
+        statusCode: response.statusCode);
   }
 }

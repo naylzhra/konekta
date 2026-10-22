@@ -2,13 +2,18 @@ import 'package:flutter/material.dart';
 
 import '../../core/api/api_client.dart';
 import '../../core/theme/konekta_theme.dart';
+import '../live_tracking/ui/route_stops_page.dart';
 
 class DriverStopsTab extends StatefulWidget {
   const DriverStopsTab(
-      {super.key, required this.token, required this.feederId});
+      {super.key,
+      required this.token,
+      required this.feederId,
+      required this.corridorId});
 
   final String token;
   final String? feederId;
+  final String? corridorId;
 
   @override
   State<DriverStopsTab> createState() => _DriverStopsTabState();
@@ -105,6 +110,15 @@ class _DriverStopsTabState extends State<DriverStopsTab> {
   @override
   Widget build(BuildContext context) => Scaffold(
         appBar: AppBar(title: const Text('Halte tugas'), actions: [
+          IconButton(
+            icon: const Icon(Icons.format_list_numbered),
+            tooltip: 'Urutan halte rute',
+            onPressed: widget.corridorId == null
+                ? null
+                : () => Navigator.of(context).push(MaterialPageRoute<void>(
+                    builder: (_) =>
+                        RouteStopsPage(corridorId: widget.corridorId!))),
+          ),
           IconButton(
               icon: const Icon(Icons.refresh),
               tooltip: 'Muat ulang',

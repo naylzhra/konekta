@@ -118,8 +118,10 @@ class _DriverHomeState extends State<DriverHome> {
         _dutyHome(),
         ListenableBuilder(
           listenable: _duty,
-          builder: (context, _) =>
-              DriverStopsTab(token: widget.token, feederId: _duty.feeder?.id),
+          builder: (context, _) => DriverStopsTab(
+              token: widget.token,
+              feederId: _duty.feeder?.id,
+              corridorId: _duty.feeder?.corridorId),
         ),
         ListenableBuilder(
           listenable: _duty,
