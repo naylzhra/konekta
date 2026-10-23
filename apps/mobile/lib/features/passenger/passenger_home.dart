@@ -5,6 +5,7 @@ import '../../core/strings/account_strings.dart';
 import '../../shared_widgets/konekta_navbar.dart';
 import '../../shared_widgets/konekta_tab_scaffold.dart';
 import '../booking/ui/booking_scope.dart';
+import '../booking/data/journey_api.dart';
 import '../live_tracking/data/feeder_api.dart';
 import '../live_tracking/data/feeder_position_stream.dart';
 import '../live_tracking/state/feeder_fleet_controller.dart';
@@ -100,6 +101,10 @@ class _PassengerTabsState extends State<_PassengerTabs> {
         MapTab(
           controller: _map!,
           fleet: _fleet!,
+          booking: BookingScope.of(context).dependencies.booking,
+          loadJourney: JourneyApi(BookingScope.of(context).session.apiClient,
+                  BookingScope.of(context).session.token)
+              .load,
           loadRoutePath: FeederApi(BookingScope.of(context).session.apiClient).routePath,
         ),
         const ProfileTab(),

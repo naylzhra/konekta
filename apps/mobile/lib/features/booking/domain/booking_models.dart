@@ -80,7 +80,9 @@ class StopSnapshot {
 
 enum LegMode {
   walk('walk'),
-  feeder('feeder');
+  feeder('feeder'),
+  motorcycle('motorcycle'),
+  car('car');
 
   const LegMode(this.wire);
 

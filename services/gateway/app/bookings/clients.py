@@ -8,7 +8,7 @@ from typing import Optional, Protocol
 
 import httpx
 import asyncpg
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.bookings import config
 from app.bookings.models import GeoPoint, Stop, StopType
@@ -252,6 +252,7 @@ class StubFeederPositionProvider:
 class RouteResult(BaseModel):
     distance_m: float
     duration_s: float
+    points: list[GeoPoint] = Field(default_factory=list)
 
 
 class RoutingError(Exception):
@@ -271,17 +272,28 @@ class OsrmRoutingClient:
         base_url: str = config.OSRM_BASE_URL,
         timeout_s: float = config.ROUTING_TIMEOUT_S,
         transport: Optional[httpx.AsyncBaseTransport] = None,
+        foot_base_url: str = config.OSRM_FOOT_BASE_URL,
+        motorcycle_base_url: str = config.OSRM_MOTORCYCLE_BASE_URL,
     ) -> None:
         self._base_url = base_url.rstrip("/")
+        self._foot_base_url = foot_base_url.rstrip("/")
+        self._motorcycle_base_url = motorcycle_base_url.rstrip("/")
         self._timeout_s = timeout_s
         self._transport = transport
 
-    async def route(self, points: list[GeoPoint], profile: str = "driving") -> RouteResult:
+    async def route(self, points: list[GeoPoint], profile: str = "driving", *, geometry: bool = False) -> RouteResult:
+        if profile not in {"driving", "walking", "motorcycle"}:
+            raise RoutingError(f"unsupported route profile: {profile}")
+        base_url = {
+            "driving": self._base_url,
+            "walking": self._foot_base_url,
+            "motorcycle": self._motorcycle_base_url,
+        }[profile]
         coordinates = ";".join(f"{p.lng},{p.lat}" for p in points)
-        url = f"{self._base_url}/route/v1/{profile}/{coordinates}"
+        url = f"{base_url}/route/v1/{profile}/{coordinates}"
         try:
             async with httpx.AsyncClient(timeout=self._timeout_s, transport=self._transport) as client:
-                response = await client.get(url, params={"overview": "false"})
+                response = await client.get(url, params={"overview": "full" if geometry else "false", "geometries": "geojson"})
             response.raise_for_status()
             body = response.json()
         except (httpx.HTTPError, ValueError) as exc:
@@ -289,7 +301,11 @@ class OsrmRoutingClient:
         if body.get("code") != "Ok" or not body.get("routes"):
             raise RoutingError("no route")
         best = body["routes"][0]
-        return RouteResult(distance_m=float(best["distance"]), duration_s=float(best["duration"]))
+        coordinates = best.get("geometry", {}).get("coordinates", []) if geometry else []
+        return RouteResult(
+            distance_m=float(best["distance"]), duration_s=float(best["duration"]),
+            points=[GeoPoint(lat=lat, lng=lng) for lng, lat in coordinates],
+        )
 
 
 def build_stop_assigner(pool: Optional[asyncpg.Pool] = None) -> StopAssigner:

@@ -21,6 +21,8 @@ SIM_DWELL_S = _int_env("SIM_DWELL_S", 45)
 SIM_RIDE_S = _int_env("SIM_RIDE_S", 20)
 
 OSRM_BASE_URL = os.getenv("OSRM_BASE_URL", "http://localhost:5001")
+OSRM_FOOT_BASE_URL = os.getenv("OSRM_FOOT_BASE_URL", OSRM_BASE_URL)
+OSRM_MOTORCYCLE_BASE_URL = os.getenv("OSRM_MOTORCYCLE_BASE_URL", OSRM_BASE_URL)
 ROUTING_TIMEOUT_S = 5.0
 
 # --- product decisions -----------------------------------------------------

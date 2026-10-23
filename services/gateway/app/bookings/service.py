@@ -157,13 +157,21 @@ class BookingService:
         if pickup.id == dropoff.id:
             raise BookingError(ErrorCode.NO_ROUTE, 422, "Destination is too close to need a feeder")
 
-        walk_to = haversine_m(request.origin, pickup.location)
-        walk_from = haversine_m(dropoff.location, request.destination)
+        walk_to = (
+            await self._route([request.origin, pickup.location], "walking")
+            if haversine_m(request.origin, pickup.location) > 1
+            else RouteResult(distance_m=0, duration_s=0)
+        )
+        walk_from = (
+            await self._route([dropoff.location, request.destination], "walking")
+            if haversine_m(dropoff.location, request.destination) > 1
+            else RouteResult(distance_m=0, duration_s=0)
+        )
         ride = await self._route([pickup.location, dropoff.location], "driving")
         legs = [
-            TripLeg(mode=LegMode.WALK, distance_m=walk_to, duration_s=walk_to / config.WALK_SPEED_MPS),
+            TripLeg(mode=LegMode.WALK, distance_m=walk_to.distance_m, duration_s=walk_to.duration_s),
             TripLeg(mode=LegMode.FEEDER, distance_m=ride.distance_m, duration_s=ride.duration_s),
-            TripLeg(mode=LegMode.WALK, distance_m=walk_from, duration_s=walk_from / config.WALK_SPEED_MPS),
+            TripLeg(mode=LegMode.WALK, distance_m=walk_from.distance_m, duration_s=walk_from.duration_s),
         ]
 
         nearest_feeder_eta_s: Optional[int] = None

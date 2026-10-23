@@ -2,7 +2,7 @@ import MapView from "../components/map/MapView";
 import PerfChart from "../components/charts/PerfChart";
 import { useGatewayHealth } from "../hooks/useGatewayHealth";
 import { useEffect, useState } from "react";
-import { fetchVirtualStopCandidates, type VirtualStopCandidate } from "../services/api";
+import { fetchVirtualStopCandidates, reviewVirtualStopCandidate, type VirtualStopCandidate } from "../services/api";
 
 type Props = {
   onLogout: () => void;
@@ -13,11 +13,36 @@ export default function Dashboard({ onLogout, token }: Props) {
   const gatewayStatus = useGatewayHealth();
   const [candidates, setCandidates] = useState<VirtualStopCandidate[]>([]);
   const [candidateError, setCandidateError] = useState(false);
+  const [reviewError, setReviewError] = useState<string | null>(null);
+  const [reviewingId, setReviewingId] = useState<string | null>(null);
+
+  async function refreshCandidates() {
+    try {
+      const response = await fetchVirtualStopCandidates(token);
+      setCandidates(response.items);
+      setCandidateError(false);
+    } catch {
+      setCandidateError(true);
+    }
+  }
+
+  async function review(candidateId: string, decision: "approve" | "reject") {
+    setReviewingId(candidateId);
+    setReviewError(null);
+    try {
+      await reviewVirtualStopCandidate(token, candidateId, decision);
+      await refreshCandidates();
+    } catch (error) {
+      setReviewError(error instanceof Error ? error.message : "Peninjauan gagal.");
+    } finally {
+      setReviewingId(null);
+    }
+  }
 
   useEffect(() => {
-    fetchVirtualStopCandidates(token)
-      .then((response) => setCandidates(response.items))
-      .catch(() => setCandidateError(true));
+    void refreshCandidates();
+    const interval = window.setInterval(() => void refreshCandidates(), 30_000);
+    return () => window.clearInterval(interval);
   }, [token]);
 
   return (
@@ -46,17 +71,31 @@ export default function Dashboard({ onLogout, token }: Props) {
       <section style={{ padding: "1rem", maxHeight: 320, overflowY: "auto" }}>
         <h2>Kandidat virtual stop</h2>
         {candidateError && <p>Daftar kandidat belum dapat dimuat.</p>}
+        {reviewError && <p role="alert">{reviewError}</p>}
+        <button onClick={() => void refreshCandidates()}>Muat ulang kandidat</button>
         {!candidateError && candidates.length === 0 && <p>Belum ada hasil analisis permintaan.</p>}
         {candidates.map((candidate) => (
           <article key={candidate.id} style={{ borderTop: "1px solid #ddd", padding: "0.5rem 0" }}>
             <strong>{candidate.corridor_id} · {candidate.direction} · slot {candidate.time_slot}</strong>
-            <div>{candidate.status} · {candidate.unique_users} pengguna unik · skor {candidate.score ?? "—"}</div>
+            <div>{candidate.status} · {candidate.cluster.size} request · {candidate.unique_users} pengguna unik · skor {candidate.score ?? "—"}</div>
             <div>{candidate.lat}, {candidate.lng} · {candidate.action ?? "—"}</div>
             <ul>
               {candidate.evaluation.checks.map((check) => (
                 <li key={check.criterion}>{check.criterion}: {check.passed ? "lolos" : "gagal"}{check.detail ? ` (${check.detail})` : ""}</li>
               ))}
             </ul>
+            {candidate.status === "proposed" && (
+              <div style={{ display: "flex", gap: "0.5rem" }}>
+                {candidate.eligible && (
+                  <button disabled={reviewingId !== null} onClick={() => void review(candidate.id, "approve")}>
+                    Setujui titik
+                  </button>
+                )}
+                <button disabled={reviewingId !== null} onClick={() => void review(candidate.id, "reject")}>
+                  Tolak usulan
+                </button>
+              </div>
+            )}
           </article>
         ))}
       </section>

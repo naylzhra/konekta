@@ -131,6 +131,15 @@ class BookingRepository:
 
     # --- stops -------------------------------------------------------------
 
+    async def get_active_stop(self, stop_id: UUID) -> Optional[Stop]:
+        row = await self._pool.fetchrow(
+            f"""SELECT {_STOP_COLUMNS} FROM stops s
+                WHERE s.id = $1 AND s.retired_at IS NULL
+                  AND (s.valid_until IS NULL OR s.valid_until > now())""",
+            stop_id,
+        )
+        return _stop_from_row(row) if row else None
+
     async def upsert_stop(self, stop: Stop) -> None:
         await self._pool.execute(
             f"""

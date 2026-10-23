@@ -53,7 +53,7 @@ class PoolingParams(BaseModel):
     eps_m: float = Field(default=150, gt=0)
     min_pts: int = Field(default=4, ge=2)
     # Requests are only pooled with others in the same time-of-day slot.
-    slot_minutes: int = Field(default=60, ge=15, le=240)
+    slot_minutes: int = Field(default=60, ge=15, le=1440)
     # A trip must move at least this far along the corridor to use it.
     min_corridor_progress_m: float = Field(default=300, ge=0)
     # Hotspot validation thresholds.

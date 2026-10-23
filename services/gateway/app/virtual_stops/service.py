@@ -39,7 +39,7 @@ async def run_virtual_stops(
     window_start: datetime,
     window_end: datetime,
     endpoint: str,
-    triggered_by: uuid.UUID,
+    triggered_by: uuid.UUID | None,
     pooling_params: dict,
     evaluation_params: dict,
 ) -> dict:

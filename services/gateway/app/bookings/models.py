@@ -42,6 +42,8 @@ class StopSnapshot(BaseModel):
 class LegMode(StrEnum):
     WALK = "walk"
     FEEDER = "feeder"
+    MOTORCYCLE = "motorcycle"
+    CAR = "car"
 
 
 class TripLeg(BaseModel):

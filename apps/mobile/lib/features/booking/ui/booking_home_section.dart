@@ -16,8 +16,8 @@ import 'active_booking_card.dart';
 import 'booking_widgets.dart';
 import 'home_widgets.dart';
 
-/// Home tab content: greeting, search, map preview, quick actions and pooling
-/// summary. Booking itself (consent -> destination -> plan -> confirm) lives in
+/// Home tab content: greeting, search, map preview, and quick actions.
+/// Booking itself (consent -> destination -> plan -> confirm) lives in
 /// [_TripPlannerPage]; once a booking exists, its live status replaces the
 /// search and quick actions here (DESIGN.md §1).
 class BookingHomeSection extends StatelessWidget {
@@ -111,8 +111,6 @@ class BookingHomeSection extends StatelessWidget {
                   ],
                 ),
               ),
-            const SizedBox(height: AppSpacing.md),
-            HomePoolingCard(activeVirtualStops: HomeStats.activeVirtualStops),
           ],
         );
       },
@@ -1126,14 +1124,18 @@ class _LegSummary extends StatelessWidget {
               ],
             ),
           ),
-        LegMode.feeder => Container(
+        LegMode.feeder || LegMode.motorcycle || LegMode.car => Container(
             padding: const EdgeInsets.symmetric(horizontal: AppSpacing.xs, vertical: 2),
             decoration: BoxDecoration(
               color: AppColors.primaryContainer,
               borderRadius: BorderRadius.circular(AppRadius.sm),
             ),
             child: Text(
-              BookingStrings.feederLine(plan.corridorId),
+              switch (leg.mode) {
+                LegMode.motorcycle => 'Motor',
+                LegMode.car => 'Mobil',
+                _ => BookingStrings.feederLine(plan.corridorId),
+              },
               style: AppTextStyles.labelMd.copyWith(color: AppColors.onPrimary, letterSpacing: 0),
             ),
           ),
@@ -1178,6 +1180,8 @@ class _RouteTimeline extends StatelessWidget {
         case LegMode.walk:
           steps.add(_TimelineStep.segment(_Rail.walk, BookingStrings.walkLeg(duration, distance)));
         case LegMode.feeder:
+        case LegMode.motorcycle:
+        case LegMode.car:
           final pickup = plan.pickupStop;
           final dropoff = plan.dropoffStop;
           steps
@@ -1187,7 +1191,11 @@ class _RouteTimeline extends StatelessWidget {
               time: at,
               stop: pickup,
             ))
-            ..add(_TimelineStep.segment(_Rail.ride, BookingStrings.rideLeg(duration, distance)));
+            ..add(_TimelineStep.segment(_Rail.ride, switch (leg.mode) {
+              LegMode.motorcycle => 'Naik motor $duration ($distance)',
+              LegMode.car => 'Naik mobil $duration ($distance)',
+              _ => BookingStrings.rideLeg(duration, distance),
+            }));
           at = at.add(Duration(seconds: leg.durationS.round()));
           steps.add(_TimelineStep.node(
             _NodeKind.dropoff,

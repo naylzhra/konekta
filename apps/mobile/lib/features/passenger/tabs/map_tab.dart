@@ -6,6 +6,10 @@ import 'package:latlong2/latlong.dart';
 import '../../../core/location/user_location_provider.dart';
 import '../../../core/strings/live_tracking_strings.dart';
 import '../../../core/theme/konekta_theme.dart';
+import '../../booking/domain/booking_models.dart';
+import '../../booking/domain/booking_state_machine.dart';
+import '../../booking/domain/journey_models.dart';
+import '../../booking/state/booking_controller.dart';
 import '../../live_tracking/domain/feeder_models.dart';
 import '../../live_tracking/state/feeder_fleet_controller.dart';
 import '../../live_tracking/state/passenger_map_controller.dart';
@@ -16,11 +20,14 @@ import '../../live_tracking/ui/route_stops_page.dart';
 /// Every on-duty feeder (searchable by route), the passenger's booked feeder
 /// highlighted, their pickup stop and (if they allow it) their own location.
 class MapTab extends StatefulWidget {
-  const MapTab({super.key, required this.controller, required this.fleet, required this.loadRoutePath});
+  const MapTab({super.key, required this.controller, required this.fleet, required this.loadRoutePath,
+    this.booking, this.loadJourney});
 
   final PassengerMapController controller;
   final FeederFleetController fleet;
   final Future<List<LatLng>> Function(String corridorId) loadRoutePath;
+  final BookingController? booking;
+  final Future<Journey> Function(String bookingId, GeoPoint? location)? loadJourney;
 
   @override
   State<MapTab> createState() => _MapTabState();
@@ -42,6 +49,12 @@ class _MapTabState extends State<MapTab> {
   final Set<String> _loadingPaths = {};
   final Set<String> _failedPaths = {};
   bool _routeLoadFailed = false;
+  Journey? _journey;
+  bool _journeyFailed = false;
+  String? _journeyKey;
+  LatLng? _lastJourneyLocation;
+  DateTime? _lastJourneyAt;
+  int _journeyRequest = 0;
 
   PassengerMapController get _map => widget.controller;
   FeederFleetController get _fleet => widget.fleet;
@@ -50,8 +63,12 @@ class _MapTabState extends State<MapTab> {
   void initState() {
     super.initState();
     _map.addListener(_autoFrame);
+    widget.booking?.addListener(_maybeLoadJourney);
     _fleet.addListener(_loadAvailableRoutes);
-    WidgetsBinding.instance.addPostFrameCallback((_) => _loadAvailableRoutes());
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _loadAvailableRoutes();
+      _maybeLoadJourney();
+    });
     // Permission may have changed in system settings.
     _lifecycle = AppLifecycleListener(onResume: _map.refreshPermission);
   }
@@ -59,6 +76,7 @@ class _MapTabState extends State<MapTab> {
   @override
   void dispose() {
     _map.removeListener(_autoFrame);
+    widget.booking?.removeListener(_maybeLoadJourney);
     _fleet.removeListener(_loadAvailableRoutes);
     _lifecycle.dispose();
     _mapController.dispose();
@@ -74,6 +92,7 @@ class _MapTabState extends State<MapTab> {
   }
 
   void _autoFrame() {
+    _maybeLoadJourney();
     if (!_mapReady) return;
     final feeder = _map.feeder;
     if (feeder != null && feeder.feederId != _framedFeederId) {
@@ -95,7 +114,43 @@ class _MapTabState extends State<MapTab> {
     return [
       if (feeder != null) LatLng(feeder.lat, feeder.lng),
       if (trip?.pickup != null && !trip!.onBoard) trip.pickup!,
+      if (_journey != null)
+        ..._journey!.current.points.map((point) => LatLng(point.lat, point.lng)),
     ];
+  }
+
+  void _maybeLoadJourney() {
+    final booking = widget.booking?.current;
+    final load = widget.loadJourney;
+    if (!mounted || booking == null || load == null ||
+        (!booking.isActive && booking.status != BookingStatus.completed)) {
+      if (_journey != null) setState(() => _journey = null);
+      return;
+    }
+    final stopUpdate = widget.booking?.pickupStopUpdate;
+    final key = '${booking.id}:${booking.status.wire}:${stopUpdate?.location.lat}:${stopUpdate?.location.lng}';
+    final me = _map.myLocation;
+    final here = me == null ? null : LatLng(me.lat, me.lng);
+    final now = DateTime.now();
+    final moved = here != null && _lastJourneyLocation != null &&
+        const Distance().as(LengthUnit.Meter, here, _lastJourneyLocation!) >= 50;
+    final elapsed = _lastJourneyAt == null || now.difference(_lastJourneyAt!) >= const Duration(seconds: 20);
+    if (key == _journeyKey && !(moved && elapsed)) return;
+    _journeyKey = key;
+    _lastJourneyLocation = here;
+    _lastJourneyAt = now;
+    final request = ++_journeyRequest;
+    load(booking.id, me == null ? null : GeoPoint(lat: me.lat, lng: me.lng)).then((journey) {
+      if (!mounted || request != _journeyRequest) return;
+      setState(() {
+        _journey = journey;
+        _journeyFailed = false;
+      });
+      if (_mapReady) _fit(_tripPoints());
+    }).catchError((Object _) {
+      if (!mounted || request != _journeyRequest) return;
+      setState(() => _journeyFailed = true);
+    });
   }
 
   void _recenter() {
@@ -159,6 +214,12 @@ class _MapTabState extends State<MapTab> {
             color: id == booked ? const Color(0xFF087F5B) : id == selected ? const Color(0xFF1769AA) : const Color(0x991769AA),
             strokeWidth: id == booked ? 8 : id == selected ? 6 : 4,
           ),
+      if (_journey != null && _journey!.current.points.length > 1)
+        Polyline(
+          points: _journey!.current.points.map((p) => LatLng(p.lat, p.lng)).toList(),
+          color: AppColors.primary,
+          strokeWidth: 7,
+        ),
     ];
   }
 
@@ -239,6 +300,16 @@ class _MapTabState extends State<MapTab> {
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   _RouteSearch(fleet: _fleet, onSelect: _selectRoute),
+                  if (_journey != null) ...[
+                    const SizedBox(height: AppSpacing.xs),
+                    _JourneyBanner(stage: _journey!.current),
+                  ] else if (_journeyFailed && widget.booking?.current?.isActive == true) ...[
+                    const SizedBox(height: AppSpacing.xs),
+                    GestureDetector(
+                      onTap: () { _journeyKey = null; _maybeLoadJourney(); },
+                      child: const _Banner(text: 'Rute perjalanan gagal dimuat. Ketuk untuk mencoba lagi.'),
+                    ),
+                  ],
                   if (_fleet.corridorFilter != null)
                     Align(
                       alignment: Alignment.centerLeft,
@@ -311,6 +382,8 @@ class _MapTabState extends State<MapTab> {
                   const SizedBox(height: AppSpacing.sm),
                   if (selected != null)
                     _FleetFeederCard(feeder: selected, fleet: _fleet)
+                  else if (_journey != null)
+                    _JourneyCard(journey: _journey!)
                   else
                     _TripCard(map: _map, onDuty: _fleet.onDutyCount),
                 ],
@@ -569,6 +642,78 @@ class _FleetFeederCard extends StatelessWidget {
       ),
     );
   }
+}
+
+String _journeyDistance(double meters) =>
+    meters < 1000 ? '${meters.round()} m' : '${(meters / 1000).toStringAsFixed(1)} km';
+
+String _journeyMinutes(double seconds) => '${(seconds / 60).ceil()} menit';
+
+String _journeyAction(JourneyStage stage) => switch (stage.mode) {
+      'walk' => 'Jalan ke ${stage.destinationName}',
+      'motorcycle' => 'Naik motor ke ${stage.destinationName}',
+      'car' => 'Naik mobil ke ${stage.destinationName}',
+      _ => 'Naik feeder ke ${stage.destinationName}',
+    };
+
+class _JourneyBanner extends StatelessWidget {
+  const _JourneyBanner({required this.stage});
+
+  final JourneyStage stage;
+
+  @override
+  Widget build(BuildContext context) => Material(
+        color: AppColors.surfaceContainerLowest,
+        elevation: 3,
+        borderRadius: BorderRadius.circular(AppRadius.md),
+        child: Padding(
+          padding: const EdgeInsets.all(AppSpacing.sm),
+          child: Row(children: [
+            Icon(stage.mode == 'walk' ? Icons.directions_walk : Icons.directions_bus,
+                color: AppColors.primary),
+            const SizedBox(width: AppSpacing.sm),
+            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(_journeyAction(stage), style: AppTextStyles.bodyMd.copyWith(fontWeight: FontWeight.w700)),
+              Text('${_journeyDistance(stage.distanceM)} lagi · ± ${_journeyMinutes(stage.durationS)}',
+                  style: AppTextStyles.bodySm),
+            ])),
+          ]),
+        ),
+      );
+}
+
+class _JourneyCard extends StatelessWidget {
+  const _JourneyCard({required this.journey});
+
+  final Journey journey;
+
+  @override
+  Widget build(BuildContext context) => Material(
+        color: AppColors.surfaceContainerLowest,
+        elevation: 3,
+        borderRadius: BorderRadius.circular(AppRadius.lg),
+        child: Padding(
+          padding: const EdgeInsets.all(AppSpacing.md),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+            const Text('Tahap perjalanan', style: AppTextStyles.headlineMd),
+            const SizedBox(height: AppSpacing.xs),
+            for (final stage in journey.stages) Padding(
+              padding: const EdgeInsets.symmetric(vertical: 4),
+              child: Row(children: [
+                Icon(stage.status == 'completed' ? Icons.check_circle :
+                    stage.mode == 'walk' ? Icons.directions_walk : Icons.directions_bus,
+                    size: 20, color: stage.status == 'active' ? AppColors.primary : AppColors.onSurface),
+                const SizedBox(width: AppSpacing.xs),
+                Expanded(child: Text(_journeyAction(stage), style: AppTextStyles.bodySm.copyWith(
+                  fontWeight: stage.status == 'active' ? FontWeight.w700 : FontWeight.w400,
+                ))),
+                Text(stage.status == 'active' ? _journeyDistance(stage.distanceM) :
+                    stage.status == 'completed' ? 'Selesai' : 'Berikutnya', style: AppTextStyles.bodySm),
+              ]),
+            ),
+          ]),
+        ),
+      );
 }
 
 class _TripCard extends StatelessWidget {

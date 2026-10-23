@@ -19,7 +19,11 @@ async function request<T>(path: string, init: RequestInit = {}, token?: string):
   const response = await fetch(`${GATEWAY_BASE_URL}${path}`, { ...init, headers });
   const body = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new ApiError(body.detail ?? `Request failed (${response.status})`, response.status);
+    const detail = body.detail;
+    const message = typeof detail === "string" ? detail
+      : typeof detail?.message === "string" ? detail.message
+      : `Request failed (${response.status})`;
+    throw new ApiError(message, response.status);
   }
   return body as T;
 }
@@ -51,6 +55,7 @@ export type VirtualStopCandidate = {
   direction: string;
   time_slot: number;
   unique_users: number;
+  cluster: { size: number };
   score: number | null;
   action: string | null;
   lat: number;
@@ -62,4 +67,16 @@ export type VirtualStopCandidate = {
 
 export function fetchVirtualStopCandidates(token: string): Promise<{ items: VirtualStopCandidate[] }> {
   return request("/virtual-stops/candidates", {}, token);
+}
+
+export function reviewVirtualStopCandidate(
+  token: string,
+  candidateId: string,
+  decision: "approve" | "reject",
+  reviewNote?: string,
+): Promise<{ id: string; status: string; stop_id?: string }> {
+  return request(`/virtual-stops/candidates/${encodeURIComponent(candidateId)}/${decision}`, {
+    method: "POST",
+    body: JSON.stringify({ review_note: reviewNote || null }),
+  }, token);
 }
