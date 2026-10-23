@@ -38,7 +38,10 @@ class _MapTabState extends State<MapTab> {
 
   /// Fleet feeder whose info card is open.
   String? _selectedFeederId;
-  List<LatLng> _routePoints = const [];
+  final Map<String, List<LatLng>> _routePaths = {};
+  final Set<String> _loadingPaths = {};
+  final Set<String> _failedPaths = {};
+  bool _routeLoadFailed = false;
 
   PassengerMapController get _map => widget.controller;
   FeederFleetController get _fleet => widget.fleet;
@@ -47,6 +50,8 @@ class _MapTabState extends State<MapTab> {
   void initState() {
     super.initState();
     _map.addListener(_autoFrame);
+    _fleet.addListener(_loadAvailableRoutes);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _loadAvailableRoutes());
     // Permission may have changed in system settings.
     _lifecycle = AppLifecycleListener(onResume: _map.refreshPermission);
   }
@@ -54,6 +59,7 @@ class _MapTabState extends State<MapTab> {
   @override
   void dispose() {
     _map.removeListener(_autoFrame);
+    _fleet.removeListener(_loadAvailableRoutes);
     _lifecycle.dispose();
     _mapController.dispose();
     super.dispose();
@@ -62,6 +68,9 @@ class _MapTabState extends State<MapTab> {
   void _onMapReady() {
     _mapReady = true;
     _autoFrame();
+    if (_map.trip == null && _routePaths.isNotEmpty) {
+      _fit(_routePaths.values.expand((points) => points).toList());
+    }
   }
 
   void _autoFrame() {
@@ -92,30 +101,65 @@ class _MapTabState extends State<MapTab> {
   void _recenter() {
     final me = _map.myLocation;
     final points = [..._tripPoints(), if (me != null) LatLng(me.lat, me.lng)];
-    _fit(points);
+    _fit(points.isNotEmpty ? points : _routePaths.values.expand((route) => route).toList());
   }
 
   void _selectRoute(String? corridorId) {
     _fleet.filterByCorridor(corridorId);
-    setState(() {
-      _selectedFeederId = null;
-      _routePoints = const [];
-    });
+    setState(() => _selectedFeederId = null);
     if (corridorId != null) {
-      _fit([for (final f in _fleet.feeders) LatLng(f.lat, f.lng)]);
-      _loadRoute(corridorId);
+      final points = _routePaths[corridorId];
+      if (points != null && points.isNotEmpty) _fit(points);
+    }
+  }
+
+  void _loadAvailableRoutes() {
+    for (final corridor in _fleet.corridors) {
+      if (!corridor.isDummy && !_routePaths.containsKey(corridor.id) &&
+          !_failedPaths.contains(corridor.id) && _loadingPaths.add(corridor.id)) {
+        _loadRoute(corridor.id);
+      }
     }
   }
 
   Future<void> _loadRoute(String corridorId) async {
     try {
       final points = await widget.loadRoutePath(corridorId);
-      if (!mounted || _fleet.corridorFilter != corridorId) return;
-      setState(() => _routePoints = points);
-      if (points.isNotEmpty) _fit(points);
+      if (!mounted) return;
+      setState(() => _routePaths[corridorId] = points);
+      if (points.isNotEmpty && (_fleet.corridorFilter == corridorId ||
+          _map.trip?.corridorId == corridorId || (_map.trip == null && _routePaths.length == 1))) {
+        _fit(points);
+      }
     } on Object {
-      // Keep live vehicle markers available if the route geometry is unavailable.
+      _failedPaths.add(corridorId);
+      if (mounted) setState(() => _routeLoadFailed = true);
+    } finally {
+      _loadingPaths.remove(corridorId);
     }
+  }
+
+  void _retryRoutes() {
+    _failedPaths.clear();
+    setState(() => _routeLoadFailed = false);
+    _loadAvailableRoutes();
+  }
+
+  List<Polyline> _routeLines() {
+    final selected = _fleet.corridorFilter;
+    final booked = _map.trip?.corridorId;
+    final ids = _routePaths.keys.toList()
+      ..sort((a, b) => (a == booked ? 1 : a == selected ? 0 : -1)
+          .compareTo(b == booked ? 1 : b == selected ? 0 : -1));
+    return [
+      for (final id in ids)
+        if (_routePaths[id]!.length > 1)
+          Polyline(
+            points: _routePaths[id]!,
+            color: id == booked ? const Color(0xFF087F5B) : id == selected ? const Color(0xFF1769AA) : const Color(0x991769AA),
+            strokeWidth: id == booked ? 8 : id == selected ? 6 : 4,
+          ),
+    ];
   }
 
   void _fit(List<LatLng> points) {
@@ -177,7 +221,7 @@ class _MapTabState extends State<MapTab> {
           children: [
             ServiceAreaMap(
               controller: _mapController,
-              routePoints: _routePoints,
+              routePolylines: _routeLines(),
               onMapReady: _onMapReady,
               onTap: () => setState(() => _selectedFeederId = null),
               markers: passengerMapMarkers(
@@ -209,6 +253,10 @@ class _MapTabState extends State<MapTab> {
                         )),
                       ),
                     ),
+                  if (_fleet.selectedCorridor?.isDummy == true) ...[
+                    const SizedBox(height: AppSpacing.xs),
+                    const _Banner(text: 'Koridor ini belum memiliki koordinat jalan. Rute K1 tetap ditampilkan.'),
+                  ],
                   if (_map.isReconnecting) ...[
                     const SizedBox(height: AppSpacing.xs),
                     const _Banner(text: LiveTrackingStrings.reconnecting),
@@ -218,6 +266,12 @@ class _MapTabState extends State<MapTab> {
                       onTap: _fleet.load,
                       child: const _Banner(
                           text: LiveTrackingStrings.fleetLoadFailed),
+                    ),
+                  ] else if (_routeLoadFailed && _routePaths.isEmpty) ...[
+                    const SizedBox(height: AppSpacing.xs),
+                    GestureDetector(
+                      onTap: _retryRoutes,
+                      child: const _Banner(text: 'Garis rute gagal dimuat. Ketuk untuk mencoba lagi.'),
                     ),
                   ],
                   if (permission != null &&

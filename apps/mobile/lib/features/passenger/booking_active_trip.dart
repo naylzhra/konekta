@@ -26,6 +26,7 @@ class BookingActiveTrip extends ChangeNotifier implements ValueListenable<Active
       final pickup = _booking.pickupStopUpdate?.location ?? booking.pickupStop?.location;
       next = ActiveTrip(
         feederId: booking.feederId,
+        corridorId: booking.corridorId,
         pickup: pickup == null ? null : LatLng(pickup.lat, pickup.lng),
         pickupName: booking.pickupStop?.name,
         onBoard: booking.status == BookingStatus.boarded,

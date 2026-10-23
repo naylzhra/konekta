@@ -1,12 +1,12 @@
 /// Where booking gets the trip's origin and destination from.
 ///
-/// Origin will come from live tracking's `UserLocationProvider` (DESIGN.md
-/// §5.3), which owns the permission prompt; booking never requests location
-/// itself. There is no geocoding/place search yet, so destinations come
-/// from a placeholder list. Both are behind this interface so the real
-/// implementations replace [StubTripLocations] without touching the UI.
+/// GPS supplies the initial origin. Named suggestions are real K1 stops;
+/// passengers can also choose either endpoint directly on the map.
 library;
 
+import '../../../core/api/api_client.dart';
+import '../../../core/location/user_location_provider.dart';
+import '../../live_tracking/data/feeder_api.dart';
 import '../domain/booking_models.dart';
 
 class TripPlace {
@@ -27,14 +27,58 @@ abstract class TripLocations {
   /// Destinations matching [query] (all suggestions when empty).
   Future<List<TripPlace>> searchDestinations(String query);
 
-  /// `--dart-define=BOOKING_LOCATIONS=stub` is the default and, for now,
-  /// the only implementation; the real one gets its own value here.
-  factory TripLocations.fromEnvironment() => const StubTripLocations();
+  factory TripLocations.fromEnvironment({ApiClient? apiClient}) =>
+      const String.fromEnvironment('BOOKING_LOCATIONS') == 'stub'
+          ? const StubTripLocations()
+          : LiveTripLocations(apiClient: apiClient ?? ApiClient());
 }
 
-/// NOT real places: fixed points inside the gateway stub's Bandung service
-/// area (services/gateway/app/bookings/clients.py) so plans succeed in
-/// demos. Replace with UserLocationProvider + a place search.
+class LiveTripLocations implements TripLocations {
+  LiveTripLocations({required ApiClient apiClient, UserLocationProvider? location})
+      : _feederApi = FeederApi(apiClient),
+        _location = location ?? GeolocatorUserLocationProvider();
+
+  final FeederApi _feederApi;
+  final UserLocationProvider _location;
+  Future<List<TripPlace>>? _places;
+
+  @override
+  bool get isPlaceholder => false;
+
+  @override
+  Future<GeoPoint?> currentOrigin() async {
+    if (await _location.requestPermission() != LocationPermissionState.granted) return null;
+    final fix = await _location.getCurrent();
+    return fix == null ? null : GeoPoint(lat: fix.lat, lng: fix.lng);
+  }
+
+  Future<List<TripPlace>> _loadPlaces() async {
+    final corridors = await _feederApi.listCorridors();
+    final places = <TripPlace>[];
+    for (final corridor in corridors.where((c) => !c.isDummy)) {
+      final route = await _feederApi.routeStops(corridor.id);
+      for (final stop in route.stops) {
+        if (stop.lat != null && stop.lng != null) {
+          places.add(TripPlace(
+            id: '${corridor.id}-${stop.position}',
+            name: '${stop.name} (${corridor.id})',
+            location: GeoPoint(lat: stop.lat!, lng: stop.lng!),
+          ));
+        }
+      }
+    }
+    return places;
+  }
+
+  @override
+  Future<List<TripPlace>> searchDestinations(String query) async {
+    final places = await (_places ??= _loadPlaces());
+    final q = query.trim().toLowerCase();
+    return [for (final place in places) if (q.isEmpty || place.name.toLowerCase().contains(q)) place];
+  }
+}
+
+/// Explicit demo option (`BOOKING_LOCATIONS=stub`) for offline UI tests.
 class StubTripLocations implements TripLocations {
   const StubTripLocations();
 

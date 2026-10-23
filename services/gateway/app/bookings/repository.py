@@ -68,7 +68,9 @@ _STOP_COLUMNS = """
 """
 
 _BOOKING_COLUMNS = """
-    b.id, b.user_id, b.trip_plan_id, b.status::text AS status, b.seats,
+    b.id, b.user_id, b.trip_plan_id,
+    (SELECT p.corridor_id FROM trip_plans p WHERE p.id = b.trip_plan_id) AS corridor_id,
+    b.status::text AS status, b.seats,
     b.pickup_stop_id, b.pickup_stop_name, b.pickup_stop_type::text AS pickup_stop_type,
     ST_Y(b.pickup_location::geometry) AS pickup_lat, ST_X(b.pickup_location::geometry) AS pickup_lng,
     b.dropoff_stop_id, b.dropoff_stop_name, b.dropoff_stop_type::text AS dropoff_stop_type,
@@ -107,6 +109,7 @@ def _booking_from_row(row: asyncpg.Record) -> BookingRecord:
         id=row["id"],
         status=BookingStatus(row["status"]),
         trip_plan_id=row["trip_plan_id"],
+        corridor_id=row["corridor_id"],
         seats=row["seats"],
         pickup_stop=_snapshot(row, "pickup"),
         dropoff_stop=_snapshot(row, "dropoff"),

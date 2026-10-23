@@ -138,9 +138,13 @@ class BookingService:
     async def plan_trip(self, user_id: UUID, request: TripPlanRequest) -> TripPlansResponse:
         await self._require_consent(user_id)
 
+        for point in (request.origin, request.destination):
+            if not (-7.05 <= point.lat <= -6.80 and 107.50 <= point.lng <= 107.75):
+                raise BookingError(ErrorCode.OUTSIDE_SERVICE_AREA, 422, "Outside Bandung service area")
+
         corridor_id = await self._stops.match_corridor(request.origin, request.destination)
         if corridor_id is None:
-            raise BookingError(ErrorCode.NO_ROUTE, 422, "Outside the service area")
+            raise BookingError(ErrorCode.NO_ROUTE, 422, "No feeder corridor serves both points")
 
         pickup = await self._stops.assign_pickup_stop(
             StopAssignmentRequest(location=request.origin, seats=request.seats, corridor_id=corridor_id)

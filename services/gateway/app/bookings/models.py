@@ -94,6 +94,7 @@ class Booking(BaseModel):
     id: UUID
     status: BookingStatus
     trip_plan_id: Optional[UUID] = None
+    corridor_id: Optional[str] = None
     seats: int
     pickup_stop: Optional[StopSnapshot] = None
     dropoff_stop: Optional[StopSnapshot] = None
@@ -160,6 +161,7 @@ class ErrorCode(StrEnum):
     NOT_FOUND = "not_found"
     CONSENT_REQUIRED = "consent_required"
     NO_ROUTE = "no_route"
+    OUTSIDE_SERVICE_AREA = "outside_service_area"
     ROUTING_UNAVAILABLE = "routing_unavailable"
     CONCURRENT_UPDATE = "concurrent_update"
     INVALID_CURSOR = "invalid_cursor"
