@@ -18,12 +18,20 @@ GOVERNMENT_ID = UUID("00000000-0000-0000-0000-00000000000e")
 async def test_k1_route_has_51_points_and_k2_is_dummy(pool):
     rows = await pool.fetch(
         """SELECT position, name, ST_Y(location::geometry) AS lat
-           FROM corridor_route_stops WHERE corridor_id = 'K1' ORDER BY position"""
+           FROM corridor_route_stops WHERE corridor_id = 'K1' AND direction = 'forward'
+           ORDER BY position"""
     )
     assert len(rows) == 51
     assert [row["position"] for row in rows] == list(range(1, 52))
     assert (rows[39]["name"], rows[39]["lat"]) == ("Simpang Sumatera - Aceh", -6.909767)
     assert (rows[40]["name"], rows[40]["lat"]) == ("Taman Lalu Lintas Kota Bandung", -6.9122313413532686)
+    backward = await pool.fetch(
+        """SELECT position, name FROM corridor_route_stops
+           WHERE corridor_id = 'K1' AND direction = 'backward' ORDER BY position"""
+    )
+    assert [backward[0]["name"], backward[-1]["name"], len(backward)] == [
+        "Pasar Baru ABC", "Simpang Soetta Kiaracondong 2", 54]
+    assert await pool.fetchval("SELECT return_path IS NOT NULL FROM corridors WHERE id = 'K1'") is True
     assert await pool.fetchval("SELECT is_dummy FROM corridors WHERE id = 'K2'") is True
     assert await pool.fetchval("SELECT path IS NULL FROM corridors WHERE id = 'K2'") is True
 
@@ -32,8 +40,12 @@ async def test_db_assigner_uses_k1_direction_and_only_active_stops(pool):
     assigner = DbStopAssigner(pool)
     origin = GeoPoint(lat=-6.945891140531955, lng=107.64085963908062)
     destination = GeoPoint(lat=-6.918301385527375, lng=107.60567416923172)
-    assert await assigner.match_corridor(origin, destination) == "K1"
-    assert await assigner.match_corridor(destination, origin) is None
+    forward = await assigner.match_corridor(origin, destination)
+    assert (forward.corridor_id, forward.direction) == ("K1", "forward")
+    # The return trip rides K1's backward route.
+    backward = await assigner.match_corridor(destination, origin)
+    assert (backward.corridor_id, backward.direction) == ("K1", "backward")
+    assert await assigner.match_corridor(origin, GeoPoint(lat=-6.9460, lng=107.6400)) is None
 
     stop_id = await pool.fetchval(
         """INSERT INTO stops (type, name, location, corridor_id)

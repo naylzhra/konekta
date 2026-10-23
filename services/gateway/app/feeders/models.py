@@ -1,6 +1,6 @@
 from datetime import datetime
 from enum import StrEnum
-from typing import Optional
+from typing import Literal, Optional
 from uuid import UUID
 
 from pydantic import AwareDatetime, BaseModel, Field
@@ -80,6 +80,9 @@ class PositionReport(BaseModel):
     lng: float = Field(ge=-180, le=180)
     heading: Optional[float] = Field(default=None, ge=0, lt=360)
     accuracy_m: Optional[float] = Field(default=None, ge=0)
+    # Direction the driver picked when going on duty (ROUTES.md); kept from
+    # the previous report when omitted.
+    direction: Optional[Literal["forward", "backward"]] = None
 
 
 class LiveFeeder(BaseModel):
@@ -92,6 +95,7 @@ class LiveFeeder(BaseModel):
     occupancy: int
     capacity: int
     corridor_id: Optional[str] = None
+    direction: Optional[Literal["forward", "backward"]] = None
     updated_at: datetime
 
 

@@ -8,6 +8,7 @@ import 'package:konekta_mobile/core/api/api_client.dart';
 import 'package:konekta_mobile/core/location/user_location_provider.dart';
 import 'package:konekta_mobile/features/live_tracking/data/feeder_api.dart';
 import 'package:konekta_mobile/features/live_tracking/data/feeder_location_reporter.dart';
+import 'package:konekta_mobile/features/live_tracking/domain/feeder_models.dart';
 import 'package:konekta_mobile/features/live_tracking/state/driver_duty_controller.dart';
 
 class _FakeLocation implements UserLocationProvider {
@@ -29,15 +30,17 @@ class _FakeLocation implements UserLocationProvider {
 
 class _FakeReporter implements FeederLocationReporter {
   final reported = <UserLocation>[];
+  final directions = <RouteDirection?>[];
   int offlineCalls = 0;
   FeederApiException? nextError;
 
   @override
-  Future<DateTime> report(UserLocation location) async {
+  Future<DateTime> report(UserLocation location, {RouteDirection? direction}) async {
     final error = nextError;
     nextError = null;
     if (error != null) throw error;
     reported.add(location);
+    directions.add(direction);
     return DateTime.utc(2026, 10, 15, 8);
   }
 
@@ -99,6 +102,22 @@ void main() {
     await duty.startDuty();
     expect(duty.status, DutyStatus.offDuty);
     expect(duty.issue, DutyIssue.permissionDeniedForever);
+  });
+
+  test('reports the chosen direction and switches it right away', () async {
+    final duty = controller();
+    await duty.load();
+    await duty.startDuty(direction: RouteDirection.backward);
+
+    location.fixes.add(_fix());
+    await _settle();
+    duty.switchDirection();
+    now = now.add(const Duration(seconds: 1)); // within the interval: a turn is sent anyway
+    location.fixes.add(_fix(lat: -6.9176));
+    await _settle();
+
+    expect(reporter.directions, [RouteDirection.backward, RouteDirection.forward]);
+    expect(duty.direction, RouteDirection.forward);
   });
 
   test('on duty: reports fixes, throttled by minReportInterval', () async {

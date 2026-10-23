@@ -50,6 +50,7 @@ class DriverDutyController extends ChangeNotifier {
   UserLocation? _lastLocation;
   DateTime? _lastSentAt;
   DateTime? _lastAttemptAt;
+  RouteDirection _direction = RouteDirection.forward;
   bool _sending = false;
   bool _disposed = false;
   StreamSubscription<UserLocation>? _fixes;
@@ -60,6 +61,16 @@ class DriverDutyController extends ChangeNotifier {
   UserLocation? get lastLocation => _lastLocation;
   DateTime? get lastSentAt => _lastSentAt;
   bool get isOnDuty => _status == DutyStatus.onDuty;
+
+  /// The way the driver is travelling the corridor; sent with every report.
+  RouteDirection get direction => _direction;
+
+  /// Turn around (e.g. at a terminal). The next fix reports it right away.
+  void switchDirection() {
+    _direction = _direction.reversed;
+    _lastAttemptAt = null;
+    _notify();
+  }
 
   Future<void> load() async {
     _set(status: DutyStatus.loading, issue: DutyIssue.none);
@@ -78,8 +89,9 @@ class DriverDutyController extends ChangeNotifier {
     }
   }
 
-  Future<void> startDuty() async {
+  Future<void> startDuty({RouteDirection? direction}) async {
     if (_status != DutyStatus.offDuty) return;
+    if (direction != null) _direction = direction;
     _set(status: DutyStatus.starting, issue: DutyIssue.none);
 
     final permission = await _location.requestPermission();
@@ -127,7 +139,7 @@ class DriverDutyController extends ChangeNotifier {
     _sending = true;
     _notify();
     try {
-      _lastSentAt = await _reporter.report(fix);
+      _lastSentAt = await _reporter.report(fix, direction: _direction);
       _set(issue: DutyIssue.none);
     } on FeederApiException catch (e) {
       switch (e.code) {

@@ -4,7 +4,7 @@
 # The feeder is resolved from the authenticated driver's assignment.
 from uuid import UUID
 
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -96,18 +96,23 @@ def stops_ahead(stops: list[tuple[float, NavStop]], driver_m: float) -> list[Nav
     return ahead or [stop for _, stop in ordered[-1:]]
 
 
-async def _route_stops(corridor_id: str, here: GeoPoint, tasks: list[DriverStop]) -> tuple[float, list[tuple[float, NavStop]]]:
-    """Every corridor stop plus task stops off the stop list (virtual), each
-    with its distance along the corridor path, and the driver's own."""
+async def _route_stops(
+    corridor_id: str, direction: str, here: GeoPoint, tasks: list[DriverStop]
+) -> tuple[float, list[tuple[float, NavStop]]]:
+    """Every stop of the corridor in [direction] plus task stops off that list
+    (virtual), each with its distance along that direction's line, and the
+    driver's own."""
     pool = await get_pool()
     extra = {t.stop_id: t for t in tasks if t.lat is not None}
     rows = await pool.fetch(
-        """WITH c AS (SELECT path::geometry AS g, ST_Length(path) AS len FROM corridors WHERE id = $1),
+        """WITH c AS (SELECT line::geometry AS g, ST_Length(line) AS len
+                      FROM (SELECT CASE WHEN $9 = 'backward' THEN return_path ELSE path END AS line
+                            FROM corridors WHERE id = $1) AS d),
                 pts AS (
                     SELECT s.id::text AS stop_id, s.name, s.type::text AS type, crs.position,
                            s.location::geometry AS geom
                     FROM corridor_route_stops crs JOIN stops s ON s.id = crs.stop_id
-                    WHERE crs.corridor_id = $1 AND s.location IS NOT NULL
+                    WHERE crs.corridor_id = $1 AND crs.direction = $9 AND s.location IS NOT NULL
                     UNION ALL
                     SELECT t.stop_id, t.name, t.type, NULL, ST_SetSRID(ST_MakePoint(t.lng, t.lat), 4326)
                     FROM unnest($4::text[], $5::text[], $6::text[], $7::float8[], $8::float8[])
@@ -121,6 +126,7 @@ async def _route_stops(corridor_id: str, here: GeoPoint, tasks: list[DriverStop]
         corridor_id, here.lat, here.lng,
         [t.stop_id for t in extra.values()], [t.name or "Halte" for t in extra.values()],
         [t.type for t in extra.values()], [t.lat for t in extra.values()], [t.lng for t in extra.values()],
+        direction,
     )
     seats: dict[str, dict[str, int]] = {}
     for task in tasks:
@@ -148,6 +154,7 @@ async def driver_navigation(
     lat: float = Query(ge=-90, le=90),
     lng: float = Query(ge=-180, le=180),
     stop_id: Optional[str] = None,
+    direction: Literal["forward", "backward"] = "forward",
     session: dict = Depends(require_driver),
 ) -> DriverNavigation:
     """Road route from the driver's position to the next stop on the corridor
@@ -155,7 +162,7 @@ async def driver_navigation(
     here = GeoPoint(lat=lat, lng=lng)
     feeder_id = await _assigned_feeder(session)
     corridor_id = await (await get_pool()).fetchval("SELECT corridor_id FROM feeders WHERE id = $1", feeder_id)
-    driver_m, stops = await _route_stops(corridor_id, here, await _stops_for(feeder_id))
+    driver_m, stops = await _route_stops(corridor_id, direction, here, await _stops_for(feeder_id))
     ahead = stops_ahead(stops, driver_m)
     if stop_id is not None:
         chosen = next((stop for _, stop in stops if stop.stop_id == stop_id), None)

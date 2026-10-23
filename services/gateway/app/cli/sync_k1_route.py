@@ -1,4 +1,5 @@
-"""Replace K1 stop-to-stop chords with the actual OSRM road geometry.
+"""Replace K1 stop-to-stop chords with the actual OSRM road geometry, for
+both directions (corridors.path = forward, corridors.return_path = backward).
 
 Snapping each stop to its single nearest road makes OSRM loop around blocks
 whenever a stop lands on the wrong carriageway or a one-way side street. So
@@ -18,12 +19,28 @@ CANDIDATES_PER_STOP = 6
 MAX_SNAP_M = 100
 # Seconds of drive time one metre of snap offset is worth.
 SNAP_PENALTY_S_PER_M = 1.0
-# Turns the feeder makes that OSM forbids: after stop <position> the path runs
+# Moves the feeder makes that OSM cannot route, keyed by (direction, position
+# of the stop the leg starts at); see ROUTES.md. After that stop the path runs
 # straight through these (lng, lat) points instead of being routed around.
-MANUAL_LINKS = {
-    # Jalan Merdeka -> left onto Jalan Aceh (see ROUTES.md).
-    39: [(107.610593, -6.9097), (107.610591, -6.909806), (107.6110, -6.909769)],
+MANUAL_LINKS: dict[tuple[str, int], list[tuple[float, float]]] = {
+    # Jalan Merdeka -> left onto Jalan Aceh (turn forbidden in OSM).
+    ("forward", 39): [(107.610593, -6.9097), (107.610591, -6.909806), (107.6110, -6.909769)],
+    # Jalan Trunojoyo -> east along Jalan Diponegoro to Lapangan Gasibu A
+    # (OSM tags part of this stretch highway=construction).
+    ("backward", 15): [
+        (107.61598, -6.901369), (107.616365, -6.901357), (107.616974, -6.901337),
+        (107.617635, -6.901307), (107.618155, -6.901287), (107.618981, -6.901261),
+        (107.619302, -6.901193), (107.619919, -6.901174),
+    ],
 }
+# Stops whose coordinate sits off the street the feeder uses (e.g. inside a
+# park, nearer to internal paths than to the road): route through this
+# (lng, lat) on the right street instead. Keyed by (direction, position).
+SNAP_AT = {
+    # Balai Kota Bandung: the route passes it on Jalan Wastukencana.
+    ("backward", 6): (107.609048, -6.912851),
+}
+DIRECTIONS = {"forward": "path", "backward": "return_path"}
 
 
 async def _get(client: httpx.AsyncClient, url: str, **params) -> dict:
@@ -75,52 +92,66 @@ async def _best_chain(client, base_url, candidates: list[list[dict]]) -> list[di
     return [stop[i] for stop, i in zip(candidates, reversed(chosen))]
 
 
+async def _route_coords(client, base_url, chain: list[dict]) -> tuple[list[list[float]], float]:
+    body = await _get(
+        client, f"{base_url}/route/v1/driving/{_coords(chain)}",
+        overview="full", geometries="geojson", continue_straight="false",
+        hints=";".join(w["hint"] for w in chain),
+    )
+    route = body["routes"][0]
+    return route["geometry"]["coordinates"], route["distance"]
+
+
+async def _build_path(client, base_url, direction: str, rows) -> tuple[list[list[float]], float]:
+    runs: list[list[list[dict]]] = [[]]
+    links: list[list[tuple[float, float]]] = []
+    for row in rows:
+        at = SNAP_AT.get((direction, row["position"]))
+        runs[-1].append(await _snap_candidates(client, base_url, *at, exact=True) if at
+                        else await _snap_candidates(client, base_url, row["lng"], row["lat"]))
+        link = MANUAL_LINKS.get((direction, row["position"]))
+        if link:
+            runs[-1].append(await _snap_candidates(client, base_url, *link[0], exact=True))
+            runs.append([await _snap_candidates(client, base_url, *link[-1], exact=True)])
+            links.append(link)
+    coordinates: list[list[float]] = []
+    distance = 0.0
+    for i, run in enumerate(runs):
+        if len(run) > 1:
+            part, length = await _route_coords(client, base_url, await _best_chain(client, base_url, run))
+            coordinates += part
+            distance += length
+        if i < len(links):
+            coordinates += [list(point) for point in links[i]]
+    return coordinates, distance
+
+
 async def main() -> None:
     conn = await asyncpg.connect(DATABASE_URL)
     try:
-        rows = await conn.fetch(
-            """SELECT position, ST_Y(location::geometry) AS lat,
-                      ST_X(location::geometry) AS lng
-               FROM corridor_route_stops
-               WHERE corridor_id = 'K1' ORDER BY position"""
-        )
-        if len(rows) != 51 or any(row["lat"] is None for row in rows):
-            raise RuntimeError("K1 must have all 51 located stops")
         base_url = os.getenv("OSRM_BASE_URL", "").rstrip("/")
         if not base_url or "osrm-mock" in base_url:
             raise RuntimeError("OSRM_BASE_URL must point to a real OSRM instance")
         async with httpx.AsyncClient(timeout=120) as client:
-            runs: list[list[list[dict]]] = [[]]
-            links: list[list[tuple[float, float]]] = []
-            for row in rows:
-                runs[-1].append(await _snap_candidates(client, base_url, row["lng"], row["lat"]))
-                link = MANUAL_LINKS.get(row["position"])
-                if link:
-                    runs[-1].append(await _snap_candidates(client, base_url, *link[0], exact=True))
-                    runs.append([await _snap_candidates(client, base_url, *link[-1], exact=True)])
-                    links.append(link)
-            coordinates: list[list[float]] = []
-            distance = 0.0
-            for i, run in enumerate(runs):
-                chain = await _best_chain(client, base_url, run)
-                body = await _get(
-                    client, f"{base_url}/route/v1/driving/{_coords(chain)}",
-                    overview="full", geometries="geojson", continue_straight="false",
-                    hints=";".join(w["hint"] for w in chain),
+            for direction, column in DIRECTIONS.items():
+                rows = await conn.fetch(
+                    """SELECT position, ST_Y(location::geometry) AS lat,
+                              ST_X(location::geometry) AS lng
+                       FROM corridor_route_stops
+                       WHERE corridor_id = 'K1' AND direction = $1 ORDER BY position""",
+                    direction,
                 )
-                coordinates += body["routes"][0]["geometry"]["coordinates"]
-                distance += body["routes"][0]["distance"]
-                if i < len(links):
-                    coordinates += [list(point) for point in links[i]]
-        geometry = {"type": "LineString", "coordinates": coordinates}
-        if len(coordinates) < 2:
-            raise RuntimeError("OSRM returned no line geometry")
-        await conn.execute(
-            "UPDATE corridors SET path = ST_GeomFromGeoJSON($1)::geography WHERE id = 'K1'",
-            json.dumps(geometry),
-        )
-        print(f"Updated K1 road path with {len(geometry['coordinates'])} vertices, "
-              f"{distance / 1000:.1f} km")
+                if len(rows) < 2 or any(row["lat"] is None for row in rows):
+                    raise RuntimeError(f"K1 {direction} needs located stops")
+                coordinates, distance = await _build_path(client, base_url, direction, rows)
+                if len(coordinates) < 2:
+                    raise RuntimeError("OSRM returned no line geometry")
+                await conn.execute(
+                    f"UPDATE corridors SET {column} = ST_GeomFromGeoJSON($1)::geography WHERE id = 'K1'",
+                    json.dumps({"type": "LineString", "coordinates": coordinates}),
+                )
+                print(f"Updated K1 {direction} road path with {len(coordinates)} vertices, "
+                      f"{distance / 1000:.1f} km")
     finally:
         await conn.close()
 

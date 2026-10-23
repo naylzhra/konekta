@@ -32,4 +32,14 @@ class DriverStrings {
   static const departBody = 'Penumpang yang belum naik akan tercatat tidak hadir.';
   static const cancel = 'Batal';
   static const recenter = 'Kembali ke posisi saya';
+  static const pickDirectionTitle = 'Pilih arah perjalanan';
+  static const from = 'Dari';
+  static const to = 'Ke';
+  static const swapDirection = 'Tukar arah';
+  static const startWithDirection = 'Mulai Bertugas';
+  static String heading(String from, String to) => '$from → $to';
+  static const switchDirection = 'Putar arah';
+  static const switchDirectionTitle = 'Putar arah?';
+  static String switchDirectionBody(String to) =>
+      'Navigasi berikutnya mengikuti rute balik menuju $to. Penumpang baru dicocokkan dengan arah ini.';
 }
