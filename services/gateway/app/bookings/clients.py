@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional, Protocol
 
 import httpx
+import asyncpg
 from pydantic import BaseModel
 
 from app.bookings import config
@@ -32,6 +33,10 @@ class StopAssignmentRequest(BaseModel):
 
 
 class StopAssigner(Protocol):
+    async def match_corridor(self, origin: GeoPoint, destination: GeoPoint) -> Optional[str]: ...
+
+    async def is_active(self, stop: Stop) -> bool: ...
+
     async def assign_pickup_stop(self, request: StopAssignmentRequest) -> Optional[Stop]: ...
 
     async def assign_dropoff_stop(self, request: StopAssignmentRequest) -> Optional[Stop]: ...
@@ -92,6 +97,84 @@ class StubStopAssigner:
 
     async def assign_dropoff_stop(self, request: StopAssignmentRequest) -> Optional[Stop]:
         return self._assign(request)
+
+    async def match_corridor(self, origin: GeoPoint, destination: GeoPoint) -> Optional[str]:
+        return "stub-corridor" if self._in_area(origin) and self._in_area(destination) else None
+
+    async def is_active(self, stop: Stop) -> bool:
+        return stop.valid_until is None or stop.valid_until > self._clock()
+
+
+class DbStopAssigner:
+    """Assign only stored, currently active stops; never invent a stop."""
+
+    def __init__(self, pool: asyncpg.Pool) -> None:
+        self._pool = pool
+
+    async def match_corridor(self, origin: GeoPoint, destination: GeoPoint) -> Optional[str]:
+        return await self._pool.fetchval(
+            """SELECT id FROM corridors c
+               WHERE c.path IS NOT NULL AND NOT c.is_dummy
+                 AND ST_DWithin(c.path,
+                       ST_SetSRID(ST_MakePoint($1, $2),4326)::geography, c.catchment_m)
+                 AND ST_DWithin(c.path,
+                       ST_SetSRID(ST_MakePoint($3, $4),4326)::geography, c.catchment_m)
+                 AND (ST_LineLocatePoint(c.path::geometry,
+                       ST_SetSRID(ST_MakePoint($3, $4),4326))
+                    - ST_LineLocatePoint(c.path::geometry,
+                       ST_SetSRID(ST_MakePoint($1, $2),4326))) * ST_Length(c.path) >= 300
+               ORDER BY ST_Distance(c.path,
+                        ST_SetSRID(ST_MakePoint($1, $2),4326)::geography)
+                      + ST_Distance(c.path,
+                        ST_SetSRID(ST_MakePoint($3, $4),4326)::geography)
+               LIMIT 1""",
+            origin.lng, origin.lat, destination.lng, destination.lat,
+        )
+
+    async def is_active(self, stop: Stop) -> bool:
+        return bool(await self._pool.fetchval(
+            """SELECT 1 FROM stops s
+               WHERE s.id = $1 AND s.retired_at IS NULL
+                 AND (s.valid_until IS NULL OR s.valid_until > now())
+                 AND (s.type = 'static' OR EXISTS (
+                      SELECT 1 FROM stop_candidates c
+                      WHERE c.approved_stop_id = s.id AND c.status = 'approved'))""",
+            stop.id,
+        ))
+
+    async def _assign(self, request: StopAssignmentRequest) -> Optional[Stop]:
+        row = await self._pool.fetchrow(
+            """SELECT s.id, s.type::text AS type, s.name, s.corridor_id, s.valid_until,
+                      ST_Y(s.location::geometry) AS lat, ST_X(s.location::geometry) AS lng
+               FROM stops s JOIN corridors c ON c.id = s.corridor_id
+               WHERE s.retired_at IS NULL
+                 AND (s.valid_until IS NULL OR s.valid_until > now())
+                 AND (s.type = 'static' OR EXISTS (
+                      SELECT 1 FROM stop_candidates candidate
+                      WHERE candidate.approved_stop_id = s.id AND candidate.status = 'approved'))
+                 AND c.path IS NOT NULL AND NOT c.is_dummy
+                 AND ($3::text IS NULL OR s.corridor_id = $3)
+                 AND ST_DWithin(s.location,
+                      ST_SetSRID(ST_MakePoint($1, $2),4326)::geography, $4)
+               ORDER BY ST_Distance(s.location,
+                      ST_SetSRID(ST_MakePoint($1, $2),4326)::geography), s.id
+               LIMIT 1""",
+            request.location.lng, request.location.lat, request.corridor_id,
+            config.MAX_WALK_TO_STOP_M,
+        )
+        if row is None:
+            return None
+        return Stop(
+            id=row["id"], type=StopType(row["type"]), name=row["name"],
+            location=GeoPoint(lat=row["lat"], lng=row["lng"]),
+            corridor_id=row["corridor_id"], valid_until=row["valid_until"],
+        )
+
+    async def assign_pickup_stop(self, request: StopAssignmentRequest) -> Optional[Stop]:
+        return await self._assign(request)
+
+    async def assign_dropoff_stop(self, request: StopAssignmentRequest) -> Optional[Stop]:
+        return await self._assign(request)
 
 
 # --- FeederPositionProvider (owned by live tracking, DESIGN.md §5.2) --------
@@ -209,9 +292,11 @@ class OsrmRoutingClient:
         return RouteResult(distance_m=float(best["distance"]), duration_s=float(best["duration"]))
 
 
-def build_stop_assigner() -> StopAssigner:
+def build_stop_assigner(pool: Optional[asyncpg.Pool] = None) -> StopAssigner:
     if config.STOP_ASSIGNER == "stub":
         return StubStopAssigner()
+    if config.STOP_ASSIGNER == "db" and pool is not None:
+        return DbStopAssigner(pool)
     raise ValueError(f"Unknown STOP_ASSIGNER={config.STOP_ASSIGNER!r}")
 
 

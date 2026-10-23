@@ -488,7 +488,9 @@ class _FeederPicker extends StatelessWidget {
         DropdownButtonFormField<String>(
           initialValue: corridor?.id,
           hint: const Text(LiveTrackingStrings.corridorHint),
-          items: [for (final c in corridors) DropdownMenuItem(value: c.id, child: Text(c.name))],
+          items: [for (final c in corridors)
+            DropdownMenuItem(value: c.id,
+              child: Text(c.isDummy ? '${c.name} (dummy)' : c.name))],
           onChanged: (value) {
             if (value != null) onCorridorChanged(value);
           },

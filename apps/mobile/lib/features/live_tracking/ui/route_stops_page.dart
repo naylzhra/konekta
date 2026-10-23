@@ -43,6 +43,8 @@ class _RouteStopsPageState extends State<RouteStopsPage> {
               padding: const EdgeInsets.all(AppSpacing.containerMargin),
               children: [
                 Text(route.name, style: AppTextStyles.headlineLgMobile),
+                if (route.isDummy)
+                  const Text('Data rute sementara (dummy)', style: AppTextStyles.bodySm),
                 const SizedBox(height: AppSpacing.xs),
                 Text('${route.stops.length} halte sesuai urutan perjalanan',
                     style: AppTextStyles.bodySm),
@@ -63,6 +65,10 @@ class _RouteStopsPageState extends State<RouteStopsPage> {
                                 .copyWith(color: AppColors.onPrimaryContainer)),
                       ),
                       title: Text(stop.name, style: AppTextStyles.bodyMd),
+                      subtitle: stop.lat != null && stop.lng != null
+                          ? Text('${stop.lat}, ${stop.lng}',
+                              style: AppTextStyles.bodySm)
+                          : null,
                     ),
                   ),
               ],

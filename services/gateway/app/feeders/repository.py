@@ -13,7 +13,7 @@ class FeederRepository:
     async def list_corridors(self) -> list[CorridorWithFeeders]:
         rows = await self._pool.fetch(
             """
-            SELECT c.id AS corridor_id, c.name AS corridor_name,
+            SELECT c.id AS corridor_id, c.name AS corridor_name, c.is_dummy,
                    f.id, f.number, f.capacity, f.driver_id IS NULL AS available
             FROM corridors c
             JOIN feeders f ON f.corridor_id = c.id
@@ -24,7 +24,8 @@ class FeederRepository:
         for row in rows:
             corridor = corridors.setdefault(
                 row["corridor_id"],
-                CorridorWithFeeders(id=row["corridor_id"], name=row["corridor_name"], feeders=[]),
+                CorridorWithFeeders(id=row["corridor_id"], name=row["corridor_name"],
+                                    is_dummy=row["is_dummy"], feeders=[]),
             )
             corridor.feeders.append(
                 FeederOption(id=row["id"], number=row["number"], capacity=row["capacity"], available=row["available"])
@@ -32,16 +33,18 @@ class FeederRepository:
         return list(corridors.values())
 
     async def route_stops(self, corridor_id: str) -> Optional[CorridorStops]:
-        corridor = await self._pool.fetchrow("SELECT id, name FROM corridors WHERE id = $1", corridor_id)
+        corridor = await self._pool.fetchrow("SELECT id, name, is_dummy FROM corridors WHERE id = $1", corridor_id)
         if corridor is None:
             return None
         rows = await self._pool.fetch(
-            "SELECT position, name FROM corridor_route_stops WHERE corridor_id = $1 ORDER BY position",
+            """SELECT position, name,
+                      ST_Y(location::geometry) AS lat, ST_X(location::geometry) AS lng
+               FROM corridor_route_stops WHERE corridor_id = $1 ORDER BY position""",
             corridor_id,
         )
         return CorridorStops(
-            id=corridor["id"], name=corridor["name"],
-            items=[RouteStop(position=row["position"], name=row["name"]) for row in rows],
+            id=corridor["id"], name=corridor["name"], is_dummy=corridor["is_dummy"],
+            items=[RouteStop(**dict(row)) for row in rows],
         )
 
     async def get_for_driver(self, driver_id: UUID) -> Optional[AssignedFeeder]:

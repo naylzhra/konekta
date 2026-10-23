@@ -30,6 +30,7 @@ class FeederOption(BaseModel):
 class CorridorWithFeeders(BaseModel):
     id: str
     name: str
+    is_dummy: bool = False
     feeders: list[FeederOption]
 
 
@@ -40,11 +41,14 @@ class CorridorList(BaseModel):
 class RouteStop(BaseModel):
     position: int
     name: str
+    lat: Optional[float] = None
+    lng: Optional[float] = None
 
 
 class CorridorStops(BaseModel):
     id: str
     name: str
+    is_dummy: bool = False
     items: list[RouteStop]
 
 

@@ -420,7 +420,7 @@ class _RouteSearchState extends State<_RouteSearch> {
                     for (final corridor in results)
                       ListTile(
                         leading: const Icon(Icons.route_outlined),
-                        title: Text(corridor.name),
+                        title: Text(corridor.isDummy ? '${corridor.name} (dummy)' : corridor.name),
                         subtitle: Text(LiveTrackingStrings.routeFeeders(
                             fleet.onDutyOn(corridor.id))),
                         selected: corridor.id == fleet.corridorFilter,
@@ -478,7 +478,8 @@ class _FleetFeederCard extends StatelessWidget {
             ),
             if (corridor != null) ...[
               const SizedBox(height: AppSpacing.base),
-              Text(corridor.name, style: AppTextStyles.bodySm),
+              Text(corridor.isDummy ? '${corridor.name} (dummy)' : corridor.name,
+                  style: AppTextStyles.bodySm),
             ],
             const SizedBox(height: AppSpacing.base),
             Text(

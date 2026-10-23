@@ -42,3 +42,24 @@ export function fetchMe(token: string): Promise<{ user_id: string; role: string;
 export function logout(token: string): Promise<{ status: string }> {
   return request("/auth/logout", { method: "POST" }, token);
 }
+
+export type VirtualStopCandidate = {
+  id: string;
+  status: string;
+  eligible: boolean;
+  corridor_id: string;
+  direction: string;
+  time_slot: number;
+  unique_users: number;
+  score: number | null;
+  action: string | null;
+  lat: number;
+  lng: number;
+  evaluation: {
+    checks: { criterion: string; passed: boolean; detail?: string | null }[];
+  };
+};
+
+export function fetchVirtualStopCandidates(token: string): Promise<{ items: VirtualStopCandidate[] }> {
+  return request("/virtual-stops/candidates", {}, token);
+}

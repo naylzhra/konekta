@@ -24,11 +24,12 @@ class FeederOption {
 
 class CorridorOption {
   const CorridorOption(
-      {required this.id, required this.name, required this.feeders});
+      {required this.id, required this.name, required this.feeders, this.isDummy = false});
 
   factory CorridorOption.fromJson(Map<String, dynamic> json) => CorridorOption(
         id: json['id'] as String,
         name: json['name'] as String,
+        isDummy: json['is_dummy'] as bool? ?? false,
         feeders: [
           for (final feeder in json['feeders'] as List<dynamic>)
             FeederOption.fromJson(feeder as Map<String, dynamic>),
@@ -37,6 +38,7 @@ class CorridorOption {
 
   final String id;
   final String name;
+  final bool isDummy;
   final List<FeederOption> feeders;
 
   List<FeederOption> get availableFeeders =>
@@ -44,25 +46,30 @@ class CorridorOption {
 }
 
 class CorridorRouteStop {
-  const CorridorRouteStop({required this.position, required this.name});
+  const CorridorRouteStop({required this.position, required this.name, this.lat, this.lng});
 
   factory CorridorRouteStop.fromJson(Map<String, dynamic> json) =>
       CorridorRouteStop(
         position: json['position'] as int,
         name: json['name'] as String,
+        lat: (json['lat'] as num?)?.toDouble(),
+        lng: (json['lng'] as num?)?.toDouble(),
       );
 
   final int position;
   final String name;
+  final double? lat;
+  final double? lng;
 }
 
 class CorridorRoute {
   const CorridorRoute(
-      {required this.id, required this.name, required this.stops});
+      {required this.id, required this.name, required this.stops, this.isDummy = false});
 
   factory CorridorRoute.fromJson(Map<String, dynamic> json) => CorridorRoute(
         id: json['id'] as String,
         name: json['name'] as String,
+        isDummy: json['is_dummy'] as bool? ?? false,
         stops: [
           for (final item in json['items'] as List<dynamic>)
             CorridorRouteStop.fromJson(item as Map<String, dynamic>),
@@ -71,6 +78,7 @@ class CorridorRoute {
 
   final String id;
   final String name;
+  final bool isDummy;
   final List<CorridorRouteStop> stops;
 }
 

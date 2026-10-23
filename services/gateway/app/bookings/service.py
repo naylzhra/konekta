@@ -138,11 +138,15 @@ class BookingService:
     async def plan_trip(self, user_id: UUID, request: TripPlanRequest) -> TripPlansResponse:
         await self._require_consent(user_id)
 
+        corridor_id = await self._stops.match_corridor(request.origin, request.destination)
+        if corridor_id is None:
+            raise BookingError(ErrorCode.NO_ROUTE, 422, "Outside the service area")
+
         pickup = await self._stops.assign_pickup_stop(
-            StopAssignmentRequest(location=request.origin, seats=request.seats)
+            StopAssignmentRequest(location=request.origin, seats=request.seats, corridor_id=corridor_id)
         )
         dropoff = await self._stops.assign_dropoff_stop(
-            StopAssignmentRequest(location=request.destination, seats=request.seats)
+            StopAssignmentRequest(location=request.destination, seats=request.seats, corridor_id=corridor_id)
         )
         if pickup is None or dropoff is None:
             raise BookingError(ErrorCode.NO_ROUTE, 422, "Outside the service area")
@@ -287,13 +291,21 @@ class BookingService:
         plan = plan_record.plan
 
         pickup = plan.pickup_stop
-        if pickup is None or (pickup.valid_until is not None and pickup.valid_until <= self._clock()):
+        if pickup is None or not await self._stops.is_active(pickup):
             pickup = await self._stops.assign_pickup_stop(
-                StopAssignmentRequest(location=plan.origin, seats=record.booking.seats)
+                StopAssignmentRequest(location=plan.origin, seats=record.booking.seats,
+                                      corridor_id=plan.corridor_id)
             )
             if pickup is not None:
                 await self._repo.upsert_stop(pickup)
         dropoff = plan.dropoff_stop
+        if dropoff is None or not await self._stops.is_active(dropoff):
+            dropoff = await self._stops.assign_dropoff_stop(
+                StopAssignmentRequest(location=plan.destination, seats=record.booking.seats,
+                                      corridor_id=plan.corridor_id)
+            )
+            if dropoff is not None:
+                await self._repo.upsert_stop(dropoff)
         if pickup is None or dropoff is None:
             await self._apply(booking_id, BookingEvent.MATCH_FAILED)
             return None

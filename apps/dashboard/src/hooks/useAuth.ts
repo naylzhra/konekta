@@ -77,5 +77,5 @@ export function useAuth() {
     setState("signed-out");
   }, [token]);
 
-  return { state, login, logout };
+  return { state, token, login, logout };
 }
