@@ -4,6 +4,7 @@ import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
 
 import '../../../core/location/user_location_provider.dart';
+import '../../../core/navigation/nav_instructions.dart';
 import '../../../core/strings/live_tracking_strings.dart';
 import '../../../core/theme/konekta_theme.dart';
 import '../../booking/domain/booking_models.dart';
@@ -16,6 +17,7 @@ import '../../live_tracking/state/passenger_map_controller.dart';
 import '../../live_tracking/ui/map_markers.dart';
 import '../../live_tracking/ui/service_area_map.dart';
 import '../../live_tracking/ui/route_stops_page.dart';
+import '../../../shared_widgets/nav_banner.dart';
 
 /// Every on-duty feeder (searchable by route), the passenger's booked feeder
 /// highlighted, their pickup stop and (if they allow it) their own location.
@@ -53,6 +55,11 @@ class _MapTabState extends State<MapTab> {
   LatLng? _lastJourneyLocation;
   DateTime? _lastJourneyAt;
   int _journeyRequest = 0;
+
+  /// While a journey is active the camera follows the passenger, heading-up,
+  /// until they pan the map themselves.
+  bool _following = true;
+  static const _navZoom = 17.5;
 
   PassengerMapController get _map => widget.controller;
   FeederFleetController get _fleet => widget.fleet;
@@ -92,6 +99,7 @@ class _MapTabState extends State<MapTab> {
   void _autoFrame() {
     _maybeLoadJourney();
     if (!_mapReady) return;
+    if (_followMe()) return;
     final feeder = _map.feeder;
     if (feeder != null && feeder.feederId != _framedFeederId) {
       _framedFeederId = feeder.feederId;
@@ -104,6 +112,17 @@ class _MapTabState extends State<MapTab> {
       _framedMe = true;
       _mapController.move(LatLng(me.lat, me.lng), _mapController.camera.zoom);
     }
+  }
+
+  /// Keeps the camera on the passenger during an active journey; false when
+  /// not following, so the caller frames the trip instead.
+  bool _followMe() {
+    final me = _map.myLocation;
+    if (_journey == null || !_following || me == null) return false;
+    final heading = me.headingDeg;
+    _mapController.moveAndRotate(
+        LatLng(me.lat, me.lng), _navZoom, heading == null ? 0 : -heading);
+    return true;
   }
 
   List<LatLng> _tripPoints() {
@@ -122,7 +141,10 @@ class _MapTabState extends State<MapTab> {
     final load = widget.loadJourney;
     if (!mounted || booking == null || load == null ||
         (!booking.isActive && booking.status != BookingStatus.completed)) {
-      if (_journey != null) setState(() => _journey = null);
+      if (_journey != null) {
+        setState(() => _journey = null);
+        if (_mapReady) _mapController.rotate(0);
+      }
       return;
     }
     final stopUpdate = widget.booking?.pickupStopUpdate;
@@ -140,16 +162,22 @@ class _MapTabState extends State<MapTab> {
     final request = ++_journeyRequest;
     load(booking.id, me == null ? null : GeoPoint(lat: me.lat, lng: me.lng)).then((journey) {
       if (!mounted || request != _journeyRequest) return;
+      final first = _journey == null;
       setState(() {
         _journey = journey;
+        if (first) _following = true;
       });
-      if (_mapReady) _fit(_tripPoints());
+      if (_mapReady && !_followMe()) _fit(_tripPoints());
     }).catchError((Object _) {
       if (!mounted || request != _journeyRequest) return;
     });
   }
 
   void _recenter() {
+    if (_journey != null) {
+      setState(() => _following = true);
+      if (_followMe()) return;
+    }
     final me = _map.myLocation;
     final points = [..._tripPoints(), if (me != null) LatLng(me.lat, me.lng)];
     _fit(points.isNotEmpty ? points : _routePaths.values.expand((route) => route).toList());
@@ -206,7 +234,9 @@ class _MapTabState extends State<MapTab> {
       if (_journey != null && _journey!.current.points.length > 1)
         Polyline(
           points: _journey!.current.points.map((p) => LatLng(p.lat, p.lng)).toList(),
-          color: AppColors.primary,
+          color: navRouteBlue,
+          borderColor: navRouteBorder,
+          borderStrokeWidth: 2,
           strokeWidth: 7,
         ),
     ];
@@ -274,6 +304,9 @@ class _MapTabState extends State<MapTab> {
               routePolylines: _routeLines(),
               onMapReady: _onMapReady,
               onTap: () => setState(() => _selectedFeederId = null),
+              onUserGesture: _journey != null && _following
+                  ? () => setState(() => _following = false)
+                  : null,
               markers: passengerMapMarkers(
                 _map,
                 fleet: _fleet,
@@ -288,11 +321,12 @@ class _MapTabState extends State<MapTab> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  _RouteSearch(fleet: _fleet, onSelect: _selectRoute),
-                  if (_journey != null) ...[
-                    const SizedBox(height: AppSpacing.xs),
-                    _JourneyBanner(stage: _journey!.current),
-                  ],
+                  // During a journey the instruction bar replaces the route
+                  // search, as in turn-by-turn navigation.
+                  if (_journey != null)
+                    _JourneyBanner(stage: _journey!.current, me: _map.myLocation)
+                  else
+                    _RouteSearch(fleet: _fleet, onSelect: _selectRoute),
                   if (_fleet.corridorFilter != null)
                     Align(
                       alignment: Alignment.centerLeft,
@@ -339,12 +373,20 @@ class _MapTabState extends State<MapTab> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
-                  FloatingActionButton.small(
-                    heroTag: null,
-                    tooltip: LiveTrackingStrings.recenter,
-                    onPressed: _recenter,
-                    child: const Icon(Icons.center_focus_strong),
-                  ),
+                  if (_journey != null && !_following)
+                    FloatingActionButton.extended(
+                      heroTag: null,
+                      onPressed: _recenter,
+                      icon: const Icon(Icons.navigation),
+                      label: const Text(LiveTrackingStrings.recenterOnMe),
+                    )
+                  else
+                    FloatingActionButton.small(
+                      heroTag: null,
+                      tooltip: LiveTrackingStrings.recenter,
+                      onPressed: _recenter,
+                      child: const Icon(Icons.center_focus_strong),
+                    ),
                   const SizedBox(height: AppSpacing.sm),
                   if (selected != null)
                     _FleetFeederCard(feeder: selected, fleet: _fleet)
@@ -613,8 +655,6 @@ class _FleetFeederCard extends StatelessWidget {
 String _journeyDistance(double meters) =>
     meters < 1000 ? '${meters.round()} m' : '${(meters / 1000).toStringAsFixed(1)} km';
 
-String _journeyMinutes(double seconds) => '${(seconds / 60).ceil()} menit';
-
 String _journeyAction(JourneyStage stage) => switch (stage.mode) {
       'walk' => 'Jalan ke ${stage.destinationName}',
       'motorcycle' => 'Naik motor ke ${stage.destinationName}',
@@ -623,29 +663,27 @@ String _journeyAction(JourneyStage stage) => switch (stage.mode) {
     };
 
 class _JourneyBanner extends StatelessWidget {
-  const _JourneyBanner({required this.stage});
+  const _JourneyBanner({required this.stage, required this.me});
 
   final JourneyStage stage;
+  final UserLocation? me;
 
   @override
-  Widget build(BuildContext context) => Material(
-        color: AppColors.surfaceContainerLowest,
-        elevation: 3,
-        borderRadius: BorderRadius.circular(AppRadius.md),
-        child: Padding(
-          padding: const EdgeInsets.all(AppSpacing.sm),
-          child: Row(children: [
-            Icon(stage.mode == 'walk' ? Icons.directions_walk : Icons.directions_bus,
-                color: AppColors.primary),
-            const SizedBox(width: AppSpacing.sm),
-            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(_journeyAction(stage), style: AppTextStyles.bodyMd.copyWith(fontWeight: FontWeight.w700)),
-              Text('${_journeyDistance(stage.distanceM)} lagi · ± ${_journeyMinutes(stage.durationS)}',
-                  style: AppTextStyles.bodySm),
-            ])),
-          ]),
-        ),
-      );
+  Widget build(BuildContext context) {
+    final here = me == null ? null : LatLng(me!.lat, me!.lng);
+    // Only walking legs are the passenger's to navigate; on the feeder the
+    // bar just says where they are headed.
+    final step = stage.mode == 'walk' && here != null
+        ? upcomingStep(stage.steps, here)
+        : null;
+    return NavBanner(
+      step: step,
+      here: here,
+      arrivalName: stage.destinationName,
+      fallback: _journeyAction(stage),
+      fallbackIcon: stage.mode == 'walk' ? Icons.directions_walk : Icons.directions_bus,
+    );
+  }
 }
 
 class _JourneyCard extends StatelessWidget {
@@ -661,7 +699,10 @@ class _JourneyCard extends StatelessWidget {
         child: Padding(
           padding: const EdgeInsets.all(AppSpacing.md),
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
-            const Text('Tahap perjalanan', style: AppTextStyles.headlineMd),
+            NavEtaRow(durationS: journey.current.durationS, distanceM: journey.current.distanceM),
+            Text(_journeyAction(journey.current), style: AppTextStyles.headlineMd),
+            const SizedBox(height: AppSpacing.sm),
+            const Text('Tahap perjalanan', style: AppTextStyles.bodySm),
             const SizedBox(height: AppSpacing.xs),
             for (final stage in journey.stages) Padding(
               padding: const EdgeInsets.symmetric(vertical: 4),

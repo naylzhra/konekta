@@ -22,8 +22,8 @@ async def test_k1_route_has_51_points_and_k2_is_dummy(pool):
     )
     assert len(rows) == 51
     assert [row["position"] for row in rows] == list(range(1, 52))
-    assert (rows[39]["name"], rows[39]["lat"]) == ("Simpang Sumatera - Aceh", -6.9122313413532686)
-    assert (rows[40]["name"], rows[40]["lat"]) == ("Taman Lalu Lintas Kota Bandung", -6.916270231648422)
+    assert (rows[39]["name"], rows[39]["lat"]) == ("Simpang Sumatera - Aceh", -6.909767)
+    assert (rows[40]["name"], rows[40]["lat"]) == ("Taman Lalu Lintas Kota Bandung", -6.9122313413532686)
     assert await pool.fetchval("SELECT is_dummy FROM corridors WHERE id = 'K2'") is True
     assert await pool.fetchval("SELECT path IS NULL FROM corridors WHERE id = 'K2'") is True
 

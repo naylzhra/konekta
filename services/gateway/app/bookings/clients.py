@@ -249,10 +249,21 @@ class StubFeederPositionProvider:
 # --- RoutingClient -> OSRM-compatible (DESIGN.md §5.7) ----------------------
 
 
+class RouteStep(BaseModel):
+    """One OSRM maneuver; the client words it (e.g. "Belok kiri ke Jalan Aceh")."""
+    type: str
+    modifier: Optional[str] = None
+    name: str = ""
+    distance_m: float
+    duration_s: float
+    location: GeoPoint
+
+
 class RouteResult(BaseModel):
     distance_m: float
     duration_s: float
     points: list[GeoPoint] = Field(default_factory=list)
+    steps: list[RouteStep] = Field(default_factory=list)
 
 
 class RoutingError(Exception):
@@ -281,7 +292,9 @@ class OsrmRoutingClient:
         self._timeout_s = timeout_s
         self._transport = transport
 
-    async def route(self, points: list[GeoPoint], profile: str = "driving", *, geometry: bool = False) -> RouteResult:
+    async def route(
+        self, points: list[GeoPoint], profile: str = "driving", *, geometry: bool = False, steps: bool = False,
+    ) -> RouteResult:
         if profile not in {"driving", "walking", "motorcycle"}:
             raise RoutingError(f"unsupported route profile: {profile}")
         base_url = {
@@ -293,7 +306,10 @@ class OsrmRoutingClient:
         url = f"{base_url}/route/v1/{profile}/{coordinates}"
         try:
             async with httpx.AsyncClient(timeout=self._timeout_s, transport=self._transport) as client:
-                response = await client.get(url, params={"overview": "full" if geometry else "false", "geometries": "geojson"})
+                response = await client.get(url, params={
+                    "overview": "full" if geometry else "false", "geometries": "geojson",
+                    "steps": "true" if steps else "false",
+                })
             response.raise_for_status()
             body = response.json()
         except (httpx.HTTPError, ValueError) as exc:
@@ -305,6 +321,15 @@ class OsrmRoutingClient:
         return RouteResult(
             distance_m=float(best["distance"]), duration_s=float(best["duration"]),
             points=[GeoPoint(lat=lat, lng=lng) for lng, lat in coordinates],
+            steps=[
+                RouteStep(
+                    type=step["maneuver"]["type"], modifier=step["maneuver"].get("modifier"),
+                    name=step.get("name") or "", distance_m=float(step["distance"]),
+                    duration_s=float(step["duration"]),
+                    location=GeoPoint(lat=step["maneuver"]["location"][1], lng=step["maneuver"]["location"][0]),
+                )
+                for leg in best.get("legs", []) for step in leg.get("steps", [])
+            ] if steps else [],
         )
 
 

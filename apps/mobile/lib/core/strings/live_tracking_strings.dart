@@ -72,6 +72,7 @@ class LiveTrackingStrings {
   static const reconnecting = 'Koneksi terputus, menyambungkan ulang...';
   static const showMyLocation = 'Tampilkan lokasi saya';
   static const turnOnGps = 'Nyalakan GPS';
+  static const recenterOnMe = 'Kembali ke posisi saya';
   static const recenter = 'Pusatkan peta';
   static String feedersOnDuty(int count) => '$count feeder sedang beroperasi';
 

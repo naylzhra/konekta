@@ -46,7 +46,7 @@ def test_journey_uses_walking_and_vehicle_routes_in_order() -> None:
         def __init__(self):
             self.profiles = []
 
-        async def route(self, points, profile="driving", *, geometry=False):
+        async def route(self, points, profile="driving", *, geometry=False, steps=False):
             self.profiles.append(profile)
             assert geometry
             return RouteResult(distance_m=400, duration_s=300, points=points)

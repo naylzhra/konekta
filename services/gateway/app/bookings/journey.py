@@ -4,7 +4,7 @@ from uuid import UUID
 
 from pydantic import BaseModel
 
-from app.bookings.clients import OsrmRoutingClient, RoutingError
+from app.bookings.clients import OsrmRoutingClient, RouteStep, RoutingError
 from app.bookings.models import GeoPoint, LegMode
 from app.bookings.repository import BookingRepository
 from app.bookings.state_machine import BookingStatus
@@ -18,6 +18,8 @@ class JourneyStage(BaseModel):
     distance_m: float
     duration_s: float
     points: list[GeoPoint]
+    # Turn-by-turn maneuvers, only for the active stage.
+    steps: list[RouteStep] = []
 
 
 class JourneyResponse(BaseModel):
@@ -72,15 +74,18 @@ async def passenger_journey(
     stages = []
     for index, (mode, origin, destination, name, profile) in enumerate(legs):
         start = current_location if index == active and current_location is not None else origin
+        steps: list[RouteStep] = []
         if start == destination:
             distance_m, duration_s, points = 0.0, 0.0, [destination]
         else:
             try:
-                route = await routing.route([start, destination], profile=profile, geometry=True)
+                route = await routing.route([start, destination], profile=profile, geometry=True,
+                                            steps=index == active)
             except RoutingError as exc:
                 raise JourneyUnavailable("Route is unavailable") from exc
             distance_m, duration_s = route.distance_m, route.duration_s
             points = route.points or [start, destination]
+            steps = route.steps
         stages.append(JourneyStage(
             mode=mode,
             status="completed" if index < active else "active" if index == active else "upcoming",
@@ -89,5 +94,6 @@ async def passenger_journey(
             distance_m=distance_m,
             duration_s=duration_s,
             points=points,
+            steps=steps,
         ))
     return JourneyResponse(booking_id=booking_id, active_stage=active, stages=stages)

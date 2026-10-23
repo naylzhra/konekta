@@ -1,3 +1,4 @@
+import '../../../core/navigation/nav_instructions.dart';
 import 'booking_models.dart';
 
 class JourneyStage {
@@ -9,6 +10,7 @@ class JourneyStage {
     required this.distanceM,
     required this.durationS,
     required this.points,
+    this.steps = const [],
   });
 
   factory JourneyStage.fromJson(Map<String, dynamic> json) => JourneyStage(
@@ -22,6 +24,10 @@ class JourneyStage {
           for (final point in json['points'] as List<dynamic>)
             GeoPoint.fromJson(point as Map<String, dynamic>),
         ],
+        steps: [
+          for (final step in json['steps'] as List<dynamic>? ?? const [])
+            NavStep.fromJson(step as Map<String, dynamic>),
+        ],
       );
 
   final String mode;
@@ -31,6 +37,9 @@ class JourneyStage {
   final double distanceM;
   final double durationS;
   final List<GeoPoint> points;
+
+  /// Turn-by-turn maneuvers; only the active stage has them.
+  final List<NavStep> steps;
 }
 
 class Journey {

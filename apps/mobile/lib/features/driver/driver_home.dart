@@ -8,19 +8,23 @@ import 'package:latlong2/latlong.dart';
 
 import '../../core/api/api_client.dart';
 import '../../core/location/user_location_provider.dart';
+import '../../core/navigation/nav_instructions.dart';
 import '../../core/strings/account_strings.dart';
+import '../../core/strings/driver_strings.dart';
 import '../../core/strings/live_tracking_strings.dart';
 import '../../core/theme/konekta_theme.dart';
 import '../../shared_widgets/konekta_navbar.dart';
 import '../../shared_widgets/konekta_tab_scaffold.dart';
 import '../../shared_widgets/loading_indicator.dart';
+import '../../shared_widgets/nav_banner.dart';
 import '../account/account_page.dart';
 import '../live_tracking/data/feeder_api.dart';
 import '../live_tracking/domain/feeder_models.dart';
 import '../live_tracking/state/driver_duty_controller.dart';
 import '../live_tracking/ui/map_markers.dart';
 import '../live_tracking/ui/service_area_map.dart';
-import 'driver_stops_tab.dart';
+import 'data/driver_trip_api.dart';
+import 'driver_sheet.dart';
 
 class DriverHome extends StatefulWidget {
   const DriverHome({super.key, required this.token});
@@ -30,16 +34,38 @@ class DriverHome extends StatefulWidget {
   @override
   State<DriverHome> createState() => _DriverHomeState();
 }
+
 class _DriverHomeState extends State<DriverHome> {
+  static const _taskPollInterval = Duration(seconds: 20);
+  static const _navRefreshInterval = Duration(seconds: 10);
+  static const _offRouteM = 40.0;
+  static const _nearStopM = 50.0;
+  static const _navZoom = 17.5;
+
   final _mapController = MapController();
   late final GeolocatorUserLocationProvider _location;
   late final DriverDutyController _duty;
   late final FeederApi _feederApi = FeederApi(ApiClient());
+  late final DriverTripApi _trip = DriverTripApi(ApiClient(), widget.token);
   bool _mapReady = false;
   String? _routeCorridorId;
   String? _loadingCorridorId;
   List<LatLng> _routePath = const [];
   List<CorridorRouteStop> _routeStops = const [];
+
+  List<DriverTaskStop>? _tasks;
+  bool _tasksFailed = false;
+  Timer? _taskPoll;
+  bool _wasOnDuty = false;
+
+  /// Stop the driver picked from the sheet; null means "closest".
+  String? _chosenStopId;
+  DriverNavigation? _nav;
+  bool _navLoading = false;
+  bool _navFailed = false;
+  DateTime? _navFetchedAt;
+  bool _following = true;
+  String? _actingStopId;
 
   @override
   void initState() {
@@ -49,14 +75,15 @@ class _DriverHomeState extends State<DriverHome> {
           ..rationale = _showRationale;
     _duty = DriverDutyController(
         api: FeederApi(ApiClient()), token: widget.token, location: _location)
-      ..addListener(_followDriver)
+      ..addListener(_onDutyChanged)
       ..load();
   }
 
   @override
   void dispose() {
+    _taskPoll?.cancel();
     _duty
-      ..removeListener(_followDriver)
+      ..removeListener(_onDutyChanged)
       ..dispose();
     _mapController.dispose();
     super.dispose();
@@ -100,15 +127,63 @@ class _DriverHomeState extends State<DriverHome> {
     return accepted ?? false;
   }
 
-  void _followDriver() {
+  LatLng? get _here {
+    final fix = _duty.lastLocation;
+    return fix == null ? null : LatLng(fix.lat, fix.lng);
+  }
+
+  void _onDutyChanged() {
     final corridorId = _duty.feeder?.corridorId;
-    if (corridorId != null && corridorId != _routeCorridorId &&
+    if (corridorId != null &&
+        corridorId != _routeCorridorId &&
         corridorId != _loadingCorridorId) {
       unawaited(_loadAssignedRoute(corridorId));
     }
-    final fix = _duty.lastLocation;
-    if (!_mapReady || fix == null || !_duty.isOnDuty) return;
-    _mapController.move(LatLng(fix.lat, fix.lng), _mapController.camera.zoom);
+    if (_duty.feeder != null && _tasks == null && !_tasksFailed) {
+      unawaited(_loadTasks());
+    }
+    if (_duty.isOnDuty != _wasOnDuty) {
+      _wasOnDuty = _duty.isOnDuty;
+      _duty.isOnDuty ? _enterNavigation() : _leaveNavigation();
+    }
+    if (!_duty.isOnDuty) return;
+    final here = _here;
+    if (here == null) return;
+    if (_following) _moveCamera(here);
+    _maybeRefreshNav(here);
+  }
+
+  void _enterNavigation() {
+    _taskPoll?.cancel();
+    _taskPoll = Timer.periodic(_taskPollInterval, (_) => _loadTasks());
+    setState(() => _following = true);
+    unawaited(_loadTasks());
+  }
+
+  void _leaveNavigation() {
+    _taskPoll?.cancel();
+    setState(() {
+      _nav = null;
+      _navFetchedAt = null;
+      _chosenStopId = null;
+    });
+    if (_mapReady) {
+      _mapController.rotate(0);
+      _fitAssignedRoute();
+    }
+  }
+
+  void _moveCamera(LatLng here) {
+    if (!_mapReady) return;
+    final heading = _duty.lastLocation?.headingDeg;
+    // Heading-up like turn-by-turn apps; north-up until the GPS knows it.
+    _mapController.moveAndRotate(here, _navZoom, heading == null ? 0 : -heading);
+  }
+
+  void _recenter() {
+    setState(() => _following = true);
+    final here = _here;
+    if (here != null) _moveCamera(here);
   }
 
   Future<void> _loadAssignedRoute(String corridorId) async {
@@ -119,14 +194,12 @@ class _DriverHomeState extends State<DriverHome> {
         _feederApi.routeStops(corridorId),
       ]);
       if (!mounted || _duty.feeder?.corridorId != corridorId) return;
-      final path = results[0] as List<LatLng>;
-      final route = results[1] as CorridorRoute;
       setState(() {
         _routeCorridorId = corridorId;
-        _routePath = path;
-        _routeStops = route.stops;
+        _routePath = results[0] as List<LatLng>;
+        _routeStops = (results[1] as CorridorRoute).stops;
       });
-      if (_mapReady) _fitAssignedRoute();
+      if (_mapReady && !_duty.isOnDuty) _fitAssignedRoute();
     } catch (_) {
       // Duty and live position remain usable even if route details are down.
     } finally {
@@ -143,9 +216,129 @@ class _DriverHomeState extends State<DriverHome> {
     if (!_mapReady || points.isEmpty) return;
     _mapController.fitCamera(CameraFit.coordinates(
       coordinates: points,
-      padding: const EdgeInsets.fromLTRB(48, 80, 48, 250),
+      padding: const EdgeInsets.fromLTRB(48, 80, 48, 320),
       maxZoom: 16,
     ));
+  }
+
+  Future<void> _loadTasks() async {
+    if (_duty.feeder == null) return;
+    try {
+      final tasks = await _trip.stops();
+      if (!mounted) return;
+      final changed = _taskKey(tasks) != _taskKey(_tasks ?? const []);
+      setState(() {
+        _tasks = tasks;
+        _tasksFailed = false;
+      });
+      // Passenger counts on the target and upcoming stops come with the
+      // route, so refresh it when bookings change.
+      final here = _here;
+      if (changed && _duty.isOnDuty && here != null) {
+        _navFetchedAt = null;
+        _maybeRefreshNav(here);
+      }
+    } catch (_) {
+      if (mounted) setState(() => _tasksFailed = true);
+    }
+  }
+
+  static String _taskKey(List<DriverTaskStop> tasks) =>
+      [for (final t in tasks) '${t.stopId}:${t.phase.name}:${t.seats}'].join(',');
+
+  void _maybeRefreshNav(LatLng here) {
+    if (_navLoading) return;
+    final fetchedAt = _navFetchedAt;
+    final stale = fetchedAt == null ||
+        DateTime.now().difference(fetchedAt) > _navRefreshInterval;
+    if (!stale && !_offRoute(here)) return;
+    unawaited(_fetchNav(here));
+  }
+
+  bool _offRoute(LatLng here) {
+    final points = _nav?.points;
+    if (points == null || points.isEmpty) return false;
+    return points.every((p) => metresTo(here, p) > _offRouteM);
+  }
+
+  Future<void> _fetchNav(LatLng here) async {
+    setState(() => _navLoading = true);
+    _navFetchedAt = DateTime.now();
+    try {
+      final nav = await _trip.navigation(here, stopId: _chosenStopId);
+      if (!mounted) return;
+      setState(() {
+        _nav = nav;
+        _navFailed = false;
+        // Once reached, a hand-picked stop gives way to the route order again.
+        if (nav != null && _chosenStopId != null &&
+            metresTo(here, nav.target.location) < _nearStopM &&
+            !nav.target.hasPassengers) {
+          _chosenStopId = null;
+        }
+      });
+    } catch (_) {
+      if (mounted) setState(() => _navFailed = true);
+    } finally {
+      if (mounted) setState(() => _navLoading = false);
+    }
+  }
+
+  void _chooseStop(String stopId) {
+    setState(() {
+      _chosenStopId = stopId;
+      _following = true;
+    });
+    final here = _here;
+    if (here == null) return;
+    _moveCamera(here);
+    unawaited(_fetchNav(here));
+  }
+
+  Future<void> _markArrived(NavStop stop) =>
+      _stopEvent(stop, arrived: true);
+
+  Future<void> _markDeparted(NavStop stop) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text(DriverStrings.departTitle),
+        content: const Text(DriverStrings.departBody),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text(DriverStrings.cancel)),
+          FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text(DriverStrings.departed)),
+        ],
+      ),
+    );
+    if (confirmed == true && mounted) await _stopEvent(stop, arrived: false);
+  }
+
+  Future<void> _stopEvent(NavStop stop, {required bool arrived}) async {
+    final feederId = _duty.feeder?.id;
+    if (feederId == null) return;
+    setState(() => _actingStopId = stop.stopId);
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      arrived
+          ? await _trip.markArrived(stop.stopId, feederId)
+          : await _trip.markDeparted(stop.stopId, feederId);
+      messenger.showSnackBar(SnackBar(
+          content: Text(arrived
+              ? DriverStrings.arrivedLogged
+              : DriverStrings.departedLogged)));
+      if (!arrived && _chosenStopId == stop.stopId) _chosenStopId = null;
+      _navFetchedAt = null;
+      await _loadTasks();
+    } catch (_) {
+      messenger.showSnackBar(
+          const SnackBar(content: Text(DriverStrings.eventFailed)));
+    } finally {
+      if (mounted) setState(() => _actingStopId = null);
+    }
   }
 
   @override
@@ -153,11 +346,9 @@ class _DriverHomeState extends State<DriverHome> {
     return KonektaTabScaffold(
       items: const [
         KonektaNavItem(
-            icon: Icons.map_outlined, selectedIcon: Icons.map, label: 'Dinas'),
-        KonektaNavItem(
-            icon: Icons.route_outlined,
-            selectedIcon: Icons.route,
-            label: 'Halte'),
+            icon: Icons.map_outlined,
+            selectedIcon: Icons.map,
+            label: DriverStrings.tabDuty),
         KonektaNavItem(
             icon: Icons.person_outline,
             selectedIcon: Icons.person,
@@ -165,13 +356,6 @@ class _DriverHomeState extends State<DriverHome> {
       ],
       tabs: [
         _dutyHome(),
-        ListenableBuilder(
-          listenable: _duty,
-          builder: (context, _) => DriverStopsTab(
-              token: widget.token,
-              feederId: _duty.feeder?.id,
-              corridorId: _duty.feeder?.corridorId),
-        ),
         ListenableBuilder(
           listenable: _duty,
           builder: (context, _) => AccountPage(
@@ -189,7 +373,6 @@ class _DriverHomeState extends State<DriverHome> {
 
   Widget _dutyHome() {
     return Scaffold(
-      appBar: AppBar(title: const Text(LiveTrackingStrings.driverTitle)),
       body: ListenableBuilder(
         listenable: _duty,
         builder: (context, _) => switch (_duty.status) {
@@ -204,161 +387,152 @@ class _DriverHomeState extends State<DriverHome> {
             ),
           DutyStatus.noFeeder =>
             const _Message(text: LiveTrackingStrings.noFeeder),
-          _ => Column(
-              children: [
-                Expanded(
-                  child: ServiceAreaMap(
-                    controller: _mapController,
-                    onMapReady: () {
-                      _mapReady = true;
-                      _fitAssignedRoute();
-                    },
-                    routePoints: _routePath,
-                    markers: [
-                      for (final stop in _routeStops)
-                        if (stop.lat != null && stop.lng != null)
-                          Marker(
-                            point: LatLng(stop.lat!, stop.lng!),
-                            width: 40,
-                            height: 46,
-                            child: _DriverStopMarker(position: stop.position),
-                          ),
-                      if (_duty.lastLocation != null)
-                        Marker(
-                          point: LatLng(
-                              _duty.lastLocation!.lat, _duty.lastLocation!.lng),
-                          width: FeederMarker.size,
-                          height: FeederMarker.size,
-                          child: const FeederMarker(),
-                        ),
-                    ],
-                  ),
-                ),
-                _DutyPanel(duty: _duty),
-              ],
-            ),
+          _ => _mapWithSheet(),
         },
       ),
     );
   }
-}
 
-class _DriverStopMarker extends StatelessWidget {
-  const _DriverStopMarker({required this.position});
-
-  final int position;
-
-  @override
-  Widget build(BuildContext context) => Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            width: 28,
-            height: 28,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-              color: AppColors.primary,
-              shape: BoxShape.circle,
-              border: Border.all(color: Colors.white, width: 2),
-              boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 4)],
-            ),
-            child: Text('$position',
-                style: AppTextStyles.labelMd.copyWith(color: Colors.white)),
-          ),
-          const Icon(Icons.place, size: 16, color: AppColors.primary),
-        ],
-      );
-}
-
-class _DutyPanel extends StatelessWidget {
-  const _DutyPanel({required this.duty});
-
-  final DriverDutyController duty;
-
-  @override
-  Widget build(BuildContext context) {
-    final feeder = duty.feeder;
-    final issue = _issueText(duty.issue);
-    return SafeArea(
-      top: false,
-      child: Padding(
-        padding: const EdgeInsets.all(AppSpacing.containerMargin),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (feeder != null)
-              Text(
-                  LiveTrackingStrings.feederLabel(
-                      feeder.number, feeder.corridorName),
-                  style: AppTextStyles.headlineMd),
-            const SizedBox(height: AppSpacing.xs),
-            Text(_statusText(), style: AppTextStyles.bodyMd),
-            if (issue != null) ...[
-              const SizedBox(height: AppSpacing.xs),
-              Text(issue,
-                  style: AppTextStyles.bodySm.copyWith(color: AppColors.error)),
+  Widget _mapWithSheet() {
+    final navigating = _duty.isOnDuty;
+    final here = _here;
+    final nav = _nav;
+    final target = nav?.target;
+    final nearTarget = here != null &&
+        target != null &&
+        metresTo(here, target.location) < _nearStopM;
+    return Stack(
+      children: [
+        Positioned.fill(
+          child: ServiceAreaMap(
+            controller: _mapController,
+            onMapReady: () {
+              _mapReady = true;
+              final at = _here;
+              _duty.isOnDuty && at != null
+                  ? _moveCamera(at)
+                  : _fitAssignedRoute();
+            },
+            onUserGesture: navigating && _following
+                ? () => setState(() => _following = false)
+                : null,
+            routePolylines: [
+              if (_routePath.length > 1)
+                Polyline(
+                  points: _routePath,
+                  color: navigating
+                      ? AppColors.primary.withValues(alpha: 0.35)
+                      : AppColors.primary,
+                  strokeWidth: navigating ? 4 : 5,
+                ),
+              if (navigating && nav != null && nav.points.length > 1)
+                Polyline(
+                  points: nav.points,
+                  color: navRouteBlue,
+                  borderColor: navRouteBorder,
+                  borderStrokeWidth: 2,
+                  strokeWidth: 7,
+                ),
             ],
-            if (duty.issue == DutyIssue.permissionDeniedForever)
-              const TextButton(
-                  onPressed: Geolocator.openAppSettings,
-                  child: Text(LiveTrackingStrings.openSettings)),
-            if (duty.issue == DutyIssue.locationServiceDisabled)
-              const TextButton(
-                onPressed: Geolocator.openLocationSettings,
-                child: Text(LiveTrackingStrings.openSettings),
-              ),
-            const SizedBox(height: AppSpacing.md),
-            ElevatedButton(
-              onPressed: switch (duty.status) {
-                DutyStatus.offDuty => duty.startDuty,
-                DutyStatus.onDuty => duty.stopDuty,
-                _ => null,
-              },
-              style: duty.isOnDuty
-                  ? ElevatedButton.styleFrom(backgroundColor: AppColors.error)
-                  : null,
-              child: Text(duty.isOnDuty
-                  ? LiveTrackingStrings.stopDuty
-                  : LiveTrackingStrings.startDuty),
-            ),
-          ],
+            markers: [
+              for (final stop in _routeStops)
+                if (stop.lat != null && stop.lng != null)
+                  Marker(
+                    point: LatLng(stop.lat!, stop.lng!),
+                    width: 30,
+                    height: 30,
+                    child: _RouteStopMarker(
+                        position: stop.position,
+                        isTarget: navigating &&
+                            target?.position == stop.position),
+                  ),
+              for (final task in _tasks ?? const <DriverTaskStop>[])
+                if (task.location != null)
+                  Marker(
+                    point: task.location!,
+                    width: 44,
+                    height: 52,
+                    alignment: Alignment.topCenter,
+                    child: TaskStopMarker(
+                        stop: task,
+                        isTarget: task.stopId == target?.stopId),
+                  ),
+              if (here != null)
+                Marker(
+                  point: here,
+                  width: FeederMarker.size,
+                  height: FeederMarker.size,
+                  child: const FeederMarker(),
+                ),
+            ],
+          ),
         ),
-      ),
+        if (navigating)
+          Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            child: SafeArea(
+              child: NavBanner(
+                step: here == null || nav == null
+                    ? null
+                    : upcomingStep(nav.steps, here),
+                here: here,
+                arrivalName: target?.name,
+                fallback: _navFailed
+                    ? DriverStrings.routeUnavailable
+                    : DriverStrings.routing,
+              ),
+            ),
+          ),
+        if (navigating && !_following)
+          Positioned(
+            right: AppSpacing.md,
+            bottom: MediaQuery.sizeOf(context).height * 0.36,
+            child: FloatingActionButton.extended(
+              heroTag: 'recenter',
+              onPressed: _recenter,
+              icon: const Icon(Icons.navigation),
+              label: const Text(DriverStrings.recenter),
+            ),
+          ),
+        DriverSheet(
+          duty: _duty,
+          tasks: _tasks,
+          tasksFailed: _tasksFailed,
+          onRetryTasks: _loadTasks,
+          corridorId: _duty.feeder?.corridorId,
+          navigation: nav,
+          nearTarget: nearTarget,
+          actingStopId: _actingStopId,
+          onChoose: _chooseStop,
+          onArrived: _markArrived,
+          onDeparted: _markDeparted,
+        ),
+      ],
     );
   }
+}
 
-  String _statusText() {
-    switch (duty.status) {
-      case DutyStatus.starting:
-        return LiveTrackingStrings.starting;
-      case DutyStatus.onDuty:
-        final sent = duty.lastSentAt;
-        if (sent == null) {
-          return '${LiveTrackingStrings.onDuty}\n${LiveTrackingStrings.waitingFirstFix}';
-        }
-        return '${LiveTrackingStrings.onDuty}\n${LiveTrackingStrings.lastSent(_clock(sent.toLocal()))}';
-      default:
-        return LiveTrackingStrings.offDuty;
-    }
-  }
+class _RouteStopMarker extends StatelessWidget {
+  const _RouteStopMarker({required this.position, this.isTarget = false});
 
-  static String _clock(DateTime t) => [t.hour, t.minute, t.second]
-      .map((v) => v.toString().padLeft(2, '0'))
-      .join(':');
+  final int position;
+  final bool isTarget;
 
-  static String? _issueText(DutyIssue issue) => switch (issue) {
-        DutyIssue.none => null,
-        DutyIssue.permissionDenied => LiveTrackingStrings.permissionDenied,
-        DutyIssue.permissionDeniedForever =>
-          LiveTrackingStrings.permissionDeniedForever,
-        DutyIssue.locationServiceDisabled =>
-          LiveTrackingStrings.locationServiceDisabled,
-        DutyIssue.outsideServiceArea => LiveTrackingStrings.outsideServiceArea,
-        DutyIssue.weakGps => LiveTrackingStrings.weakGps,
-        DutyIssue.sendFailed => LiveTrackingStrings.sendFailed,
-        DutyIssue.sessionExpired => LiveTrackingStrings.sessionExpired,
-      };
+  @override
+  Widget build(BuildContext context) => Container(
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: isTarget ? navGreen : AppColors.primary,
+          shape: BoxShape.circle,
+          border: Border.all(color: Colors.white, width: isTarget ? 3 : 2),
+          boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 4)],
+        ),
+        child: Text('$position',
+            style: AppTextStyles.labelMd
+                .copyWith(color: Colors.white, fontSize: 11)),
+      );
 }
 
 class _Message extends StatelessWidget {
@@ -387,4 +561,3 @@ class _Message extends StatelessWidget {
     );
   }
 }
-

@@ -22,6 +22,7 @@ class ServiceAreaMap extends StatelessWidget {
     this.interactive = true,
     this.onTap,
     this.onMapTap,
+    this.onUserGesture,
   });
 
   final MapController? controller;
@@ -39,6 +40,9 @@ class ServiceAreaMap extends StatelessWidget {
   /// Taps on the map itself, not on a marker.
   final VoidCallback? onTap;
   final void Function(LatLng point)? onMapTap;
+
+  /// The user panned, zoomed or rotated the map by hand.
+  final VoidCallback? onUserGesture;
 
   static const _tileUrl = _useMapbox
       ? 'https://api.mapbox.com/styles/v1/$_mapboxStyle/tiles/256/{z}/{x}/{y}@2x?access_token=$_mapboxToken'
@@ -59,6 +63,9 @@ class ServiceAreaMap extends StatelessWidget {
         maxZoom: 18,
         cameraConstraint: CameraConstraint.contain(bounds: _bounds),
         onMapReady: onMapReady,
+        onPositionChanged: onUserGesture == null ? null : (_, hasGesture) {
+          if (hasGesture) onUserGesture!();
+        },
         onTap: onTap == null && onMapTap == null ? null : (_, point) {
           onTap?.call();
           onMapTap?.call(point);

@@ -24,5 +24,5 @@ class AccountStrings {
   static const passengerHelp =
       'Buat rencana perjalanan dari Beranda, lalu pantau pemesanan di Perjalanan atau posisi feeder di Peta. Jika perjalanan aktif bermasalah, buka Perjalanan untuk melihat status dan pilihan pembatalan.';
   static const driverHelp =
-      'Mulai dinas untuk membagikan posisi feeder. Buka Halte untuk melihat penjemputan dan penurunan aktif; catat saat tiba dan berangkat. Akhiri dinas setelah selesai bekerja.';
+      'Halte yang perlu dilayani tampil di panel bawah peta Dinas. Tekan Mulai Bertugas untuk membagikan posisi feeder dan masuk mode navigasi ke halte berikutnya; catat saat tiba dan berangkat. Akhiri dinas setelah selesai bekerja.';
 }
