@@ -16,6 +16,7 @@ class ServiceAreaMap extends StatelessWidget {
     this.controller,
     this.initialCenter,
     this.markers = const [],
+    this.routePoints = const [],
     this.onMapReady,
     this.interactive = true,
     this.onTap,
@@ -27,6 +28,7 @@ class ServiceAreaMap extends StatelessWidget {
   final VoidCallback? onMapReady;
   final LatLng? initialCenter;
   final List<Marker> markers;
+  final List<LatLng> routePoints;
 
   /// False for a static preview (no pan/zoom, so it doesn't fight scrolling).
   final bool interactive;
@@ -58,6 +60,10 @@ class ServiceAreaMap extends StatelessWidget {
       ),
       children: [
         TileLayer(urlTemplate: _tileUrl, userAgentPackageName: 'com.example.konekta_mobile'),
+        if (routePoints.length > 1)
+          PolylineLayer(polylines: [
+            Polyline(points: routePoints, color: const Color(0xFF1769AA), strokeWidth: 5),
+          ]),
         MarkerLayer(markers: markers),
         const RichAttributionWidget(
           attributions: [

@@ -52,6 +52,16 @@ class CorridorStops(BaseModel):
     items: list[RouteStop]
 
 
+class RoutePoint(BaseModel):
+    lat: float
+    lng: float
+
+
+class CorridorPath(BaseModel):
+    id: str
+    points: list[RoutePoint]
+
+
 class AssignedFeeder(BaseModel):
     id: str
     number: int

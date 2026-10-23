@@ -97,7 +97,11 @@ class _PassengerTabsState extends State<_PassengerTabs> {
       tabs: [
         HomeTab(map: _map!, fleet: _fleet!),
         const TripsTab(),
-        MapTab(controller: _map!, fleet: _fleet!),
+        MapTab(
+          controller: _map!,
+          fleet: _fleet!,
+          loadRoutePath: FeederApi(BookingScope.of(context).session.apiClient).routePath,
+        ),
         const ProfileTab(),
       ],
     );

@@ -1,3 +1,5 @@
+import 'package:latlong2/latlong.dart';
+
 import '../../../core/api/api_client.dart';
 import '../domain/feeder_models.dart';
 
@@ -37,6 +39,18 @@ class FeederApi {
       CorridorRoute.fromJson(
           await _request('GET', '/corridors/$corridorId/stops')
               as Map<String, dynamic>);
+
+  Future<List<LatLng>> routePath(String corridorId) async {
+    final body = await _request('GET', '/corridors/$corridorId/path')
+        as Map<String, dynamic>;
+    return [
+      for (final point in body['points'] as List<dynamic>)
+        LatLng(
+          ((point as Map<String, dynamic>)['lat'] as num).toDouble(),
+          (point['lng'] as num).toDouble(),
+        ),
+    ];
+  }
 
   /// Every feeder currently on duty; live updates follow on `corridor:<id>`.
   Future<List<FeederPosition>> liveFeeders(String token) async {

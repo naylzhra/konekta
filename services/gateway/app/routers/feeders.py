@@ -10,6 +10,7 @@ from app.feeders.dependencies import get_feeder_repository, get_feeder_service
 from app.feeders.models import (
     AssignedFeeder,
     CorridorList,
+    CorridorPath,
     CorridorStops,
     FeederError,
     LiveFeeder,
@@ -47,6 +48,16 @@ async def corridor_stops(
     if route is None:
         raise HTTPException(status_code=404, detail="Corridor not found")
     return route
+
+
+@router.get("/corridors/{corridor_id}/path", response_model=CorridorPath)
+async def corridor_path(
+    corridor_id: str, repository: FeederRepository = Depends(get_feeder_repository)
+) -> CorridorPath:
+    path = await repository.route_path(corridor_id)
+    if path is None:
+        raise HTTPException(status_code=404, detail="Corridor not found")
+    return path
 
 
 # Snapshot for the passenger map; live updates follow on corridor:<id> topics.

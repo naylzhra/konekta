@@ -16,10 +16,11 @@ import '../../live_tracking/ui/route_stops_page.dart';
 /// Every on-duty feeder (searchable by route), the passenger's booked feeder
 /// highlighted, their pickup stop and (if they allow it) their own location.
 class MapTab extends StatefulWidget {
-  const MapTab({super.key, required this.controller, required this.fleet});
+  const MapTab({super.key, required this.controller, required this.fleet, required this.loadRoutePath});
 
   final PassengerMapController controller;
   final FeederFleetController fleet;
+  final Future<List<LatLng>> Function(String corridorId) loadRoutePath;
 
   @override
   State<MapTab> createState() => _MapTabState();
@@ -37,6 +38,7 @@ class _MapTabState extends State<MapTab> {
 
   /// Fleet feeder whose info card is open.
   String? _selectedFeederId;
+  List<LatLng> _routePoints = const [];
 
   PassengerMapController get _map => widget.controller;
   FeederFleetController get _fleet => widget.fleet;
@@ -95,9 +97,25 @@ class _MapTabState extends State<MapTab> {
 
   void _selectRoute(String? corridorId) {
     _fleet.filterByCorridor(corridorId);
-    setState(() => _selectedFeederId = null);
-    if (corridorId != null)
+    setState(() {
+      _selectedFeederId = null;
+      _routePoints = const [];
+    });
+    if (corridorId != null) {
       _fit([for (final f in _fleet.feeders) LatLng(f.lat, f.lng)]);
+      _loadRoute(corridorId);
+    }
+  }
+
+  Future<void> _loadRoute(String corridorId) async {
+    try {
+      final points = await widget.loadRoutePath(corridorId);
+      if (!mounted || _fleet.corridorFilter != corridorId) return;
+      setState(() => _routePoints = points);
+      if (points.isNotEmpty) _fit(points);
+    } on Object {
+      // Keep live vehicle markers available if the route geometry is unavailable.
+    }
   }
 
   void _fit(List<LatLng> points) {
@@ -159,6 +177,7 @@ class _MapTabState extends State<MapTab> {
           children: [
             ServiceAreaMap(
               controller: _mapController,
+              routePoints: _routePoints,
               onMapReady: _onMapReady,
               onTap: () => setState(() => _selectedFeederId = null),
               markers: passengerMapMarkers(

@@ -1,9 +1,10 @@
+import json
 from typing import Optional
 from uuid import UUID
 
 import asyncpg
 
-from app.feeders.models import AssignedFeeder, CorridorStops, CorridorWithFeeders, FeederOption, RouteStop
+from app.feeders.models import AssignedFeeder, CorridorPath, CorridorStops, CorridorWithFeeders, FeederOption, RoutePoint, RouteStop
 
 
 class FeederRepository:
@@ -45,6 +46,19 @@ class FeederRepository:
         return CorridorStops(
             id=corridor["id"], name=corridor["name"], is_dummy=corridor["is_dummy"],
             items=[RouteStop(**dict(row)) for row in rows],
+        )
+
+    async def route_path(self, corridor_id: str) -> Optional[CorridorPath]:
+        row = await self._pool.fetchrow(
+            "SELECT id, ST_AsGeoJSON(path::geometry) AS geometry FROM corridors WHERE id = $1",
+            corridor_id,
+        )
+        if row is None:
+            return None
+        coordinates = json.loads(row["geometry"])["coordinates"] if row["geometry"] else []
+        return CorridorPath(
+            id=row["id"],
+            points=[RoutePoint(lat=lat, lng=lng) for lng, lat in coordinates],
         )
 
     async def get_for_driver(self, driver_id: UUID) -> Optional[AssignedFeeder]:
