@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
@@ -14,6 +16,7 @@ import '../../shared_widgets/konekta_tab_scaffold.dart';
 import '../../shared_widgets/loading_indicator.dart';
 import '../account/account_page.dart';
 import '../live_tracking/data/feeder_api.dart';
+import '../live_tracking/domain/feeder_models.dart';
 import '../live_tracking/state/driver_duty_controller.dart';
 import '../live_tracking/ui/map_markers.dart';
 import '../live_tracking/ui/service_area_map.dart';
@@ -27,12 +30,16 @@ class DriverHome extends StatefulWidget {
   @override
   State<DriverHome> createState() => _DriverHomeState();
 }
-
 class _DriverHomeState extends State<DriverHome> {
   final _mapController = MapController();
   late final GeolocatorUserLocationProvider _location;
   late final DriverDutyController _duty;
+  late final FeederApi _feederApi = FeederApi(ApiClient());
   bool _mapReady = false;
+  String? _routeCorridorId;
+  String? _loadingCorridorId;
+  List<LatLng> _routePath = const [];
+  List<CorridorRouteStop> _routeStops = const [];
 
   @override
   void initState() {
@@ -94,9 +101,51 @@ class _DriverHomeState extends State<DriverHome> {
   }
 
   void _followDriver() {
+    final corridorId = _duty.feeder?.corridorId;
+    if (corridorId != null && corridorId != _routeCorridorId &&
+        corridorId != _loadingCorridorId) {
+      unawaited(_loadAssignedRoute(corridorId));
+    }
     final fix = _duty.lastLocation;
     if (!_mapReady || fix == null || !_duty.isOnDuty) return;
     _mapController.move(LatLng(fix.lat, fix.lng), _mapController.camera.zoom);
+  }
+
+  Future<void> _loadAssignedRoute(String corridorId) async {
+    _loadingCorridorId = corridorId;
+    try {
+      final results = await Future.wait<Object>([
+        _feederApi.routePath(corridorId),
+        _feederApi.routeStops(corridorId),
+      ]);
+      if (!mounted || _duty.feeder?.corridorId != corridorId) return;
+      final path = results[0] as List<LatLng>;
+      final route = results[1] as CorridorRoute;
+      setState(() {
+        _routeCorridorId = corridorId;
+        _routePath = path;
+        _routeStops = route.stops;
+      });
+      if (_mapReady) _fitAssignedRoute();
+    } catch (_) {
+      // Duty and live position remain usable even if route details are down.
+    } finally {
+      if (_loadingCorridorId == corridorId) _loadingCorridorId = null;
+    }
+  }
+
+  void _fitAssignedRoute() {
+    final points = [
+      ..._routePath,
+      for (final stop in _routeStops)
+        if (stop.lat != null && stop.lng != null) LatLng(stop.lat!, stop.lng!),
+    ];
+    if (!_mapReady || points.isEmpty) return;
+    _mapController.fitCamera(CameraFit.coordinates(
+      coordinates: points,
+      padding: const EdgeInsets.fromLTRB(48, 80, 48, 250),
+      maxZoom: 16,
+    ));
   }
 
   @override
@@ -160,8 +209,20 @@ class _DriverHomeState extends State<DriverHome> {
                 Expanded(
                   child: ServiceAreaMap(
                     controller: _mapController,
-                    onMapReady: () => _mapReady = true,
+                    onMapReady: () {
+                      _mapReady = true;
+                      _fitAssignedRoute();
+                    },
+                    routePoints: _routePath,
                     markers: [
+                      for (final stop in _routeStops)
+                        if (stop.lat != null && stop.lng != null)
+                          Marker(
+                            point: LatLng(stop.lat!, stop.lng!),
+                            width: 40,
+                            height: 46,
+                            child: _DriverStopMarker(position: stop.position),
+                          ),
                       if (_duty.lastLocation != null)
                         Marker(
                           point: LatLng(
@@ -180,6 +241,33 @@ class _DriverHomeState extends State<DriverHome> {
       ),
     );
   }
+}
+
+class _DriverStopMarker extends StatelessWidget {
+  const _DriverStopMarker({required this.position});
+
+  final int position;
+
+  @override
+  Widget build(BuildContext context) => Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 28,
+            height: 28,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: AppColors.primary,
+              shape: BoxShape.circle,
+              border: Border.all(color: Colors.white, width: 2),
+              boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 4)],
+            ),
+            child: Text('$position',
+                style: AppTextStyles.labelMd.copyWith(color: Colors.white)),
+          ),
+          const Icon(Icons.place, size: 16, color: AppColors.primary),
+        ],
+      );
 }
 
 class _DutyPanel extends StatelessWidget {
@@ -299,3 +387,4 @@ class _Message extends StatelessWidget {
     );
   }
 }
+

@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:http/http.dart' as http;
 
@@ -129,16 +130,12 @@ class ApiClient {
     required String role,
     String? feederId,
   }) async {
-    final response = await _http.post(
-      Uri.parse('$baseUrl/auth/register'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({
-        'phone_number': phoneNumber,
-        'password': password,
-        'role': role,
-        if (feederId != null) 'feeder_id': feederId,
-      }),
-    ).timeout(_requestTimeout);
+    final response = await _authPost('/auth/register', {
+      'phone_number': phoneNumber,
+      'password': password,
+      'role': role,
+      if (feederId != null) 'feeder_id': feederId,
+    });
     return _parseAuthResponse(response);
   }
 
@@ -146,14 +143,10 @@ class ApiClient {
     required String phoneNumber,
     required String password,
   }) async {
-    final response = await _http.post(
-      Uri.parse('$baseUrl/auth/login'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({
-        'phone_number': phoneNumber,
-        'password': password,
-      }),
-    ).timeout(_requestTimeout);
+    final response = await _authPost('/auth/login', {
+      'phone_number': phoneNumber,
+      'password': password,
+    });
     final result = _parseAuthResponse(response);
     if (!mobileRoles.contains(result.role)) {
       // Don't leave a live session behind for an account we won't let in.
@@ -178,5 +171,23 @@ class ApiClient {
       throw AuthException(body['detail']?.toString() ?? 'Request failed (${response.statusCode})');
     }
     return AuthResult.fromJson(body);
+  }
+
+  Future<http.Response> _authPost(String path, Map<String, Object?> body) async {
+    try {
+      return await _http
+          .post(
+            Uri.parse('$baseUrl$path'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode(body),
+          )
+          .timeout(_requestTimeout);
+    } on TimeoutException {
+      throw const ApiTransportException(ApiTransportFailure.timeout);
+    } on SocketException {
+      throw const ApiTransportException(ApiTransportFailure.offline);
+    } on http.ClientException {
+      throw const ApiTransportException(ApiTransportFailure.offline);
+    }
   }
 }
