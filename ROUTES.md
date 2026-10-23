@@ -2,7 +2,7 @@
 
 ## Feeder 1 — K1
 
-Simpang Soetta Kiaracondong 2 → Pasar Baru ABC. Urutan dan koordinat berikut diberikan langsung untuk implementasi rute feeder 1. Koordinat menggunakan format `latitude, longitude` (WGS84). Sesuai koreksi berikutnya, koordinat stop 40 dan 41 ditukar, sedangkan nama dan urutannya dipertahankan. Daftar ini juga menjadi sumber untuk migrasi `009_feeder_1_route.sql`.
+Simpang Soetta Kiaracondong 2 → Pasar Baru ABC. Urutan dan koordinat berikut diberikan langsung untuk implementasi rute feeder 1. Koordinat menggunakan format `latitude, longitude` (WGS84). Sesuai koreksi berikutnya, koordinat stop 40 dan 41 ditukar, sedangkan nama dan urutannya dipertahankan. Koordinat stop 39–42 dikoreksi ke posisi aslinya di peta OpenStreetMap: 39 dan 40 di titik simpang jalan masing-masing (Merdeka × L.L. RE. Martadinata/Riau, Sumatra × Aceh), 41 di tepi Taman Lalu Lintas Ade Irma Suryani, 42 di SMP Negeri 2 (Jalan Sumatra). Belokan kiri Jalan Merdeka → Jalan Aceh dilarang di data OSM, sehingga `sync_k1_route` menyambungnya secara manual. Daftar ini juga menjadi sumber untuk migrasi `009_feeder_1_route.sql`.
 
 | Urutan | Stop | Latitude | Longitude |
 | ---: | --- | ---: | ---: |
@@ -44,9 +44,9 @@ Simpang Soetta Kiaracondong 2 → Pasar Baru ABC. Urutan dan koordinat berikut d
 | 36 | Taman Segitiga Trunojoyo I | -6.901792413748248 | 107.6158242507189 |
 | 37 | Simpang Sultan Tirtayasa - Trunojoyo I | -6.902372414100083 | 107.61442060653962 |
 | 38 | Jalan Sultan Agung | -6.904232187593347 | 107.61278113615916 |
-| 39 | Simpang Merdeka - Riau | -6.910293727406866 | 107.6109697106948 |
-| 40 | Simpang Sumatera - Aceh | -6.9122313413532686 | 107.61442513113882 |
-| 41 | Taman Lalu Lintas Kota Bandung | -6.916270231648422 | 107.61442664092898 |
+| 39 | Simpang Merdeka - Riau | -6.90699 | 107.61061 |
+| 40 | Simpang Sumatera - Aceh | -6.909767 | 107.612391 |
+| 41 | Taman Lalu Lintas Kota Bandung | -6.9122313413532686 | 107.61442513113882 |
 | 42 | SMP Negeri 2 Bandung | -6.913796517478549 | 107.61471115735989 |
 | 43 | Polrestabes Bandung I | -6.9144882786465 | 107.61198040283742 |
 | 44 | SD Negeri Merdeka | -6.914732730637008 | 107.61122996791904 |
