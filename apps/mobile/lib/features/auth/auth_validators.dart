@@ -30,7 +30,10 @@ String? validatePasswordConfirmation(String password, String confirmation) {
   return null;
 }
 
-String friendlyAuthError(Object error) {
+String? friendlyAuthError(Object error) {
+  // Network/backend outages stay silent in the UI; form validation and
+  // expected authentication errors still get user-facing feedback.
+  if (error is ApiTransportException) return null;
   if (error is AuthException) {
     const knownMessages = {
       'Phone number already registered': 'Nomor telepon sudah terdaftar',
@@ -46,5 +49,5 @@ String friendlyAuthError(Object error) {
     }
     return 'Terjadi kesalahan. Silakan coba lagi.';
   }
-  return 'Tidak dapat terhubung ke server. Periksa koneksi internet Anda.';
+  return 'Terjadi kesalahan. Silakan coba lagi.';
 }

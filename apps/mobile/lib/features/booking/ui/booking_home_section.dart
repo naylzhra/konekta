@@ -73,10 +73,6 @@ class BookingHomeSection extends StatelessWidget {
             const SizedBox(height: AppSpacing.base),
             const Text(BookingStrings.homeSubtitle, style: AppTextStyles.bodyMd),
             const SizedBox(height: AppSpacing.lg),
-            if (!controller.isOnline) ...[
-              const BookingNotice(icon: Icons.cloud_off, message: BookingStrings.offline),
-              const SizedBox(height: AppSpacing.sm),
-            ],
             if (!hasBooking) ...[
               HomeSearchBar(onTap: () => _openPlanner(context)),
               const SizedBox(height: AppSpacing.md),
@@ -172,10 +168,6 @@ class _TripPlannerPageState extends State<_TripPlannerPage> {
                 return ListView(
                   padding: const EdgeInsets.all(AppSpacing.containerMargin),
                   children: [
-                    if (!controller.isOnline) ...[
-                      const BookingNotice(icon: Icons.cloud_off, message: BookingStrings.offline),
-                      const SizedBox(height: AppSpacing.sm),
-                    ],
                     _ConsentCard(controller: controller),
                   ],
                 );
@@ -488,14 +480,6 @@ class _TripPlannerState extends State<_TripPlanner> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              // Always one child, so toggling connectivity doesn't shift the
-              // endpoints card and reset the text field.
-              controller.isOnline
-                  ? const SizedBox.shrink()
-                  : const Padding(
-                      padding: EdgeInsets.only(bottom: AppSpacing.sm),
-                      child: BookingNotice(icon: Icons.cloud_off, message: BookingStrings.offline),
-                    ),
               _EndpointsCard(
                 origin: _swapped ? placeField : currentLocation,
                 destination: _swapped ? currentLocation : placeField,

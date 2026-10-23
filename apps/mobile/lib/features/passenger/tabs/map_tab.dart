@@ -48,9 +48,7 @@ class _MapTabState extends State<MapTab> {
   final Map<String, List<LatLng>> _routePaths = {};
   final Set<String> _loadingPaths = {};
   final Set<String> _failedPaths = {};
-  bool _routeLoadFailed = false;
   Journey? _journey;
-  bool _journeyFailed = false;
   String? _journeyKey;
   LatLng? _lastJourneyLocation;
   DateTime? _lastJourneyAt;
@@ -144,12 +142,10 @@ class _MapTabState extends State<MapTab> {
       if (!mounted || request != _journeyRequest) return;
       setState(() {
         _journey = journey;
-        _journeyFailed = false;
       });
       if (_mapReady) _fit(_tripPoints());
     }).catchError((Object _) {
       if (!mounted || request != _journeyRequest) return;
-      setState(() => _journeyFailed = true);
     });
   }
 
@@ -188,16 +184,9 @@ class _MapTabState extends State<MapTab> {
       }
     } on Object {
       _failedPaths.add(corridorId);
-      if (mounted) setState(() => _routeLoadFailed = true);
     } finally {
       _loadingPaths.remove(corridorId);
     }
-  }
-
-  void _retryRoutes() {
-    _failedPaths.clear();
-    setState(() => _routeLoadFailed = false);
-    _loadAvailableRoutes();
   }
 
   List<Polyline> _routeLines() {
@@ -303,12 +292,6 @@ class _MapTabState extends State<MapTab> {
                   if (_journey != null) ...[
                     const SizedBox(height: AppSpacing.xs),
                     _JourneyBanner(stage: _journey!.current),
-                  ] else if (_journeyFailed && widget.booking?.current?.isActive == true) ...[
-                    const SizedBox(height: AppSpacing.xs),
-                    GestureDetector(
-                      onTap: () { _journeyKey = null; _maybeLoadJourney(); },
-                      child: const _Banner(text: 'Rute perjalanan gagal dimuat. Ketuk untuk mencoba lagi.'),
-                    ),
                   ],
                   if (_fleet.corridorFilter != null)
                     Align(
@@ -327,23 +310,6 @@ class _MapTabState extends State<MapTab> {
                   if (_fleet.selectedCorridor?.isDummy == true) ...[
                     const SizedBox(height: AppSpacing.xs),
                     const _Banner(text: 'Koridor ini belum memiliki koordinat jalan. Rute K1 tetap ditampilkan.'),
-                  ],
-                  if (_map.isReconnecting) ...[
-                    const SizedBox(height: AppSpacing.xs),
-                    const _Banner(text: LiveTrackingStrings.reconnecting),
-                  ] else if (_fleet.loadFailed) ...[
-                    const SizedBox(height: AppSpacing.xs),
-                    GestureDetector(
-                      onTap: _fleet.load,
-                      child: const _Banner(
-                          text: LiveTrackingStrings.fleetLoadFailed),
-                    ),
-                  ] else if (_routeLoadFailed && _routePaths.isEmpty) ...[
-                    const SizedBox(height: AppSpacing.xs),
-                    GestureDetector(
-                      onTap: _retryRoutes,
-                      child: const _Banner(text: 'Garis rute gagal dimuat. Ketuk untuk mencoba lagi.'),
-                    ),
                   ],
                   if (permission != null &&
                       permission != LocationPermissionState.granted)
