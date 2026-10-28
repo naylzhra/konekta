@@ -3,7 +3,8 @@ import mapboxgl from "mapbox-gl";
 
 // TODO: pull from env (VITE_MAPBOX_TOKEN) once the dashboard talks to real
 // spatial data (virtual stops, feeder positions, demand heatmaps).
-mapboxgl.accessToken = import.meta.env.VITE_MAPBOX_TOKEN ?? "";
+const MAPBOX_TOKEN = import.meta.env.VITE_MAPBOX_TOKEN ?? "";
+mapboxgl.accessToken = MAPBOX_TOKEN;
 
 const BANDUNG_CENTER: [number, number] = [107.6191, -6.9175];
 
@@ -11,7 +12,8 @@ export default function MapView() {
   const containerRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    if (!containerRef.current) return;
+    // mapboxgl.Map throws without a token, which would blank the whole page.
+    if (!containerRef.current || !MAPBOX_TOKEN) return;
 
     const map = new mapboxgl.Map({
       container: containerRef.current,
@@ -22,6 +24,25 @@ export default function MapView() {
 
     return () => map.remove();
   }, []);
+
+  if (!MAPBOX_TOKEN) {
+    return (
+      <div
+        style={{
+          width: "100%",
+          height: "100%",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          padding: 16,
+          textAlign: "center",
+          color: "#666",
+        }}
+      >
+        Peta belum aktif: isi VITE_MAPBOX_TOKEN di apps/dashboard/.env lalu jalankan ulang npm run dev.
+      </div>
+    );
+  }
 
   return <div ref={containerRef} style={{ width: "100%", height: "100%" }} />;
 }
