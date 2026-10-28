@@ -1,0 +1,215 @@
+.login {
+  min-height: 100vh;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  background: var(--color-background);
+}
+
+/* Brand panel */
+
+.login__brand {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-xl);
+  /* Extra bottom padding nudges the centered group above the midline. */
+  padding: var(--space-xl) calc(var(--space-xl) * 1.5) 18vh;
+  text-align: center;
+  background: linear-gradient(
+    160deg,
+    var(--color-primary) 0%,
+    var(--color-inverse-surface) 100%
+  );
+  color: var(--color-on-primary);
+}
+
+.login__brand-logo {
+  width: 220px;
+  height: auto;
+  margin-bottom: var(--space-md);
+}
+
+.login__brand-copy h2 {
+  margin: 0 0 var(--space-md);
+  font-family: var(--font-heading);
+  font-size: 26px;
+  font-weight: 600;
+  line-height: 40px;
+  letter-spacing: -0.64px;
+}
+
+.login__brand-copy p {
+  max-width: 420px;
+  margin: 0 auto;
+  font-size: 16px;
+  line-height: 24px;
+  color: var(--color-on-primary-container);
+}
+
+/* Form panel */
+
+.login__panel {
+  display: grid;
+  place-items: center;
+  padding: var(--space-xl) var(--space-container-margin);
+}
+
+.login__form {
+  width: 100%;
+  max-width: 380px;
+  display: flex;
+  flex-direction: column;
+}
+
+.login__logo {
+  display: none;
+  width: 200px;
+  height: auto;
+  margin: 0 auto var(--space-xl);
+}
+
+.login__title {
+  margin: 0;
+  font-family: var(--font-heading);
+  font-size: 24px;
+  font-weight: 600;
+  line-height: 32px;
+  letter-spacing: -0.24px;
+  color: var(--color-on-background);
+}
+
+.login__subtitle {
+  margin: var(--space-xs) 0 var(--space-xl);
+  font-size: 14px;
+  line-height: 20px;
+  color: var(--color-on-surface-variant);
+}
+
+.login__label {
+  margin-bottom: var(--space-xs);
+  font-size: 16px;
+  line-height: 24px;
+}
+
+.login__field + .login__label {
+  margin-top: var(--space-lg);
+}
+
+.login__field {
+  display: flex;
+  gap: var(--space-xs);
+}
+
+.login__input,
+.login__prefix {
+  height: 52px;
+  padding: 0 var(--space-md);
+  border: 1px solid var(--color-input-border);
+  border-radius: var(--radius-standard);
+  background: var(--color-input-fill);
+  font: inherit;
+  font-size: 16px;
+  color: var(--color-on-surface);
+}
+
+.login__prefix {
+  display: flex;
+  align-items: center;
+}
+
+.login__input {
+  flex: 1;
+  min-width: 0;
+  outline: none;
+}
+
+.login__input:focus {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 0.5px var(--color-primary);
+}
+
+.login__password {
+  position: relative;
+  flex: 1;
+  display: flex;
+}
+
+.login__password .login__input {
+  padding-right: 48px;
+}
+
+/* Hide Edge's built-in reveal button; .login__toggle replaces it. */
+.login__password .login__input::-ms-reveal,
+.login__password .login__input::-ms-clear {
+  display: none;
+}
+
+.login__toggle {
+  position: absolute;
+  top: 50%;
+  right: var(--space-xs);
+  transform: translateY(-50%);
+  display: flex;
+  padding: var(--space-xs);
+  border: none;
+  background: none;
+  color: var(--color-outline);
+  cursor: pointer;
+}
+
+.login__toggle:hover {
+  color: var(--color-primary);
+}
+
+.login__error {
+  margin: var(--space-sm) 0 0;
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--radius-standard);
+  background: var(--color-error-container);
+  font-size: 14px;
+  line-height: 20px;
+  color: var(--color-on-error-container);
+}
+
+.login__submit {
+  height: 52px;
+  margin-top: var(--space-xl);
+  border: none;
+  border-radius: var(--radius-standard);
+  background: var(--color-primary);
+  font: inherit;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--color-on-primary);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.login__submit:hover:not(:disabled) {
+  background: var(--color-primary-container);
+}
+
+.login__submit:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+.login__submit:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+@media (max-width: 860px) {
+  .login {
+    grid-template-columns: 1fr;
+  }
+
+  .login__brand {
+    display: none;
+  }
+
+  .login__logo {
+    display: block;
+  }
+}
