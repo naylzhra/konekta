@@ -44,5 +44,8 @@ FEEDER_SEARCH_RADIUS_M = 10000
 # A feeder this far past the pickup along the route still counts as arriving.
 FEEDER_PASSED_TOLERANCE_M = 50
 MAX_WALK_TO_STOP_M = 800
+# When no route serves a trip, the closest stop within this distance of the
+# origin is suggested instead.
+NEAREST_STOP_HINT_MAX_M = 3000
 VIRTUAL_STOP_TTL_S = 900
 WALK_SPEED_MPS = 1.25

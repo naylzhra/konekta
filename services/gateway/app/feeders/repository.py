@@ -14,7 +14,7 @@ class FeederRepository:
     async def list_corridors(self) -> list[CorridorWithFeeders]:
         rows = await self._pool.fetch(
             """
-            SELECT c.id AS corridor_id, c.name AS corridor_name, c.is_dummy,
+            SELECT c.id AS corridor_id, c.name AS corridor_name, c.is_dummy, c.route_code,
                    f.id, f.number, f.capacity, f.driver_id IS NULL AS available
             FROM corridors c
             JOIN feeders f ON f.corridor_id = c.id
@@ -26,7 +26,7 @@ class FeederRepository:
             corridor = corridors.setdefault(
                 row["corridor_id"],
                 CorridorWithFeeders(id=row["corridor_id"], name=row["corridor_name"],
-                                    is_dummy=row["is_dummy"], feeders=[]),
+                                    is_dummy=row["is_dummy"], route_code=row["route_code"], feeders=[]),
             )
             corridor.feeders.append(
                 FeederOption(id=row["id"], number=row["number"], capacity=row["capacity"], available=row["available"])
@@ -34,7 +34,11 @@ class FeederRepository:
         return list(corridors.values())
 
     async def route_stops(self, corridor_id: str, direction: str = "forward") -> Optional[CorridorStops]:
-        corridor = await self._pool.fetchrow("SELECT id, name, is_dummy FROM corridors WHERE id = $1", corridor_id)
+        corridor = await self._pool.fetchrow(
+            """SELECT id, name, is_dummy, operating_hours, operating_days, fare_from_idr
+               FROM corridors WHERE id = $1""",
+            corridor_id,
+        )
         if corridor is None:
             return None
         rows = await self._pool.fetch(
@@ -44,9 +48,52 @@ class FeederRepository:
                ORDER BY position""",
             corridor_id, direction,
         )
-        return CorridorStops(
-            id=corridor["id"], name=corridor["name"], is_dummy=corridor["is_dummy"],
-            items=[RouteStop(**dict(row)) for row in rows],
+        return CorridorStops(**dict(corridor), items=[RouteStop(**dict(row)) for row in rows])
+
+    async def route_members(self, corridor_id: str) -> list[str]:
+        """[corridor_id] plus the corridors sharing its route code: the same
+        road to passengers, so their feeders count toward its arrivals."""
+        rows = await self._pool.fetch(
+            """SELECT c.id FROM corridors c, corridors me
+               WHERE me.id = $1
+                 AND (c.id = me.id OR (me.route_code IS NOT NULL AND c.route_code = me.route_code))
+               ORDER BY c.id = me.id DESC, c.id""",
+            corridor_id,
+        )
+        return [row["id"] for row in rows]
+
+    async def route_progress(
+        self, corridor_id: str, direction: str, points: list[tuple[float, float]]
+    ) -> Optional[tuple[list[tuple[int, str, Optional[float]]], list[Optional[float]]]]:
+        """Distance (m) along [direction]'s corridor line of each route stop
+        (position, name, along_m) and of each (lat, lng) point. Distances are
+        None without a line; None overall when the corridor doesn't exist."""
+        column = "return_path" if direction == "backward" else "path"
+        if await self._pool.fetchval("SELECT 1 FROM corridors WHERE id = $1", corridor_id) is None:
+            return None
+        stops = await self._pool.fetch(
+            f"""SELECT s.position, s.name,
+                       ST_LineLocatePoint(c.{column}::geometry, s.location::geometry)
+                         * ST_Length(c.{column}) AS along_m
+                FROM corridor_route_stops s JOIN corridors c ON c.id = s.corridor_id
+                WHERE s.corridor_id = $1 AND s.direction = $2
+                ORDER BY s.position""",
+            corridor_id, direction,
+        )
+        along: dict[int, float] = {}
+        if points:
+            rows = await self._pool.fetch(
+                f"""SELECT p.ord, ST_LineLocatePoint(c.{column}::geometry,
+                              ST_SetSRID(ST_MakePoint(p.lng, p.lat), 4326)) * ST_Length(c.{column}) AS along_m
+                    FROM corridors c,
+                         unnest($2::float8[], $3::float8[]) WITH ORDINALITY AS p(lat, lng, ord)
+                    WHERE c.id = $1 AND c.{column} IS NOT NULL""",
+                corridor_id, [lat for lat, _ in points], [lng for _, lng in points],
+            )
+            along = {row["ord"]: row["along_m"] for row in rows}
+        return (
+            [(row["position"], row["name"], row["along_m"]) for row in stops],
+            [along.get(i + 1) for i in range(len(points))],
         )
 
     async def route_path(self, corridor_id: str, direction: str = "forward") -> Optional[CorridorPath]:

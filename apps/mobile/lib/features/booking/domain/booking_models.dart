@@ -60,6 +60,23 @@ class Stop {
   final DateTime? validUntil;
 }
 
+/// Closest boardable stop to the origin, sent with a no_route error.
+class NearestStopHint {
+  const NearestStopHint({required this.stop, required this.walkDistanceM, this.walkDurationS});
+
+  factory NearestStopHint.fromJson(Map<String, dynamic> json) => NearestStopHint(
+        stop: Stop.fromJson(json['stop'] as Map<String, dynamic>),
+        walkDistanceM: (json['walk_distance_m'] as num).toDouble(),
+        walkDurationS: (json['walk_duration_s'] as num?)?.toDouble(),
+      );
+
+  final Stop stop;
+  final double walkDistanceM;
+
+  /// Null when the server couldn't route the walk; [walkDistanceM] is then straight-line.
+  final double? walkDurationS;
+}
+
 /// Stop as it was when the booking was confirmed; never rewritten.
 class StopSnapshot {
   const StopSnapshot({this.id, required this.type, required this.name, required this.location});
@@ -118,6 +135,7 @@ class TripPlan {
     this.pickupStop,
     this.dropoffStop,
     this.corridorId,
+    this.routeCode,
     this.nearestFeederEtaS,
   });
 
@@ -133,6 +151,7 @@ class TripPlan {
         pickupStop: _parseOptional(json['pickup_stop'], Stop.fromJson),
         dropoffStop: _parseOptional(json['dropoff_stop'], Stop.fromJson),
         corridorId: json['corridor_id'] as String?,
+        routeCode: json['route_code'] as String?,
         nearestFeederEtaS: json['nearest_feeder_eta_s'] as int?,
         expiresAt: DateTime.parse(json['expires_at'] as String),
       );
@@ -146,8 +165,14 @@ class TripPlan {
   final Stop? pickupStop;
   final Stop? dropoffStop;
   final String? corridorId;
+
+  /// Passenger-facing route code (e.g. FD-1), when the corridor has one.
+  final String? routeCode;
   final int? nearestFeederEtaS;
   final DateTime expiresAt;
+
+  /// What to call the line: the route code, else the corridor id.
+  String? get lineLabel => routeCode ?? corridorId;
 
   bool isExpired(DateTime now) => !now.isBefore(expiresAt);
 }

@@ -4,6 +4,8 @@
 /// for logs only and never contains coordinates or user ids.
 library;
 
+import 'booking_models.dart';
+
 enum BookingFailureCode {
   // server (`{"detail": {"code", "message"}}`)
   invalidTransition('invalid_transition'),
@@ -40,11 +42,14 @@ enum BookingFailureCode {
 }
 
 class BookingException implements Exception {
-  const BookingException(this.code, {this.statusCode, this.debugMessage});
+  const BookingException(this.code, {this.statusCode, this.debugMessage, this.nearestStop});
 
   final BookingFailureCode code;
   final int? statusCode;
   final String? debugMessage;
+
+  /// With [BookingFailureCode.noRoute]: where the passenger could board instead.
+  final NearestStopHint? nearestStop;
 
   @override
   String toString() => 'BookingException(${code.wire}, status: $statusCode)';

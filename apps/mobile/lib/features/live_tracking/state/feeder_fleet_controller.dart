@@ -42,19 +42,22 @@ class FeederFleetController extends ChangeNotifier {
   final Map<String, FeederPosition> _feeders = {};
   final Map<String, DateTime> _heardAt = {};
   bool _loadFailed = false;
-  String? _corridorFilter;
+  Set<String> _corridorFilters = const {};
 
   List<CorridorOption> get corridors => _corridors;
   bool get loadFailed => _loadFailed;
 
-  /// The route (corridor) the map is filtered to; null shows every feeder.
-  String? get corridorFilter => _corridorFilter;
-  CorridorOption? get selectedCorridor => corridor(_corridorFilter);
+  /// Routes (corridors) the map is narrowed to; empty shows every route.
+  Set<String> get corridorFilters => _corridorFilters;
 
-  /// On-duty feeders, narrowed to [corridorFilter] when set.
+  /// The route the map is narrowed to, when it's exactly one.
+  String? get corridorFilter => _corridorFilters.length == 1 ? _corridorFilters.single : null;
+  CorridorOption? get selectedCorridor => corridor(corridorFilter);
+
+  /// On-duty feeders, narrowed to [corridorFilters] when set.
   List<FeederPosition> get feeders => [
         for (final feeder in _feeders.values)
-          if (_corridorFilter == null || corridorIdOf(feeder) == _corridorFilter) feeder,
+          if (_corridorFilters.isEmpty || _corridorFilters.contains(corridorIdOf(feeder))) feeder,
       ];
 
   int get onDutyCount => _feeders.length;
@@ -84,21 +87,38 @@ class FeederFleetController extends ChangeNotifier {
     return null;
   }
 
-  /// Routes whose name or id contains [query] (case-insensitive).
-  List<CorridorOption> searchRoutes(String query) {
+  /// Corridors grouped into passenger routes by route code, in corridor order.
+  List<TransitRoute> get routes {
+    final groups = <String, List<CorridorOption>>{};
+    for (final corridor in _corridors) {
+      groups.putIfAbsent(corridor.routeCode ?? corridor.id, () => []).add(corridor);
+    }
+    return [for (final MapEntry(:key, :value) in groups.entries) TransitRoute(id: key, corridors: value)];
+  }
+
+  /// Routes whose code, name or a corridor id contains [query] (case-insensitive).
+  List<TransitRoute> searchRoutes(String query) {
     final q = query.trim().toLowerCase();
-    if (q.isEmpty) return _corridors;
+    if (q.isEmpty) return routes;
     return [
-      for (final corridor in _corridors)
-        if (corridor.name.toLowerCase().contains(q) || corridor.id.toLowerCase().contains(q)) corridor,
+      for (final route in routes)
+        if (route.id.toLowerCase().contains(q) ||
+            route.name.toLowerCase().contains(q) ||
+            route.corridors.any((c) => c.id.toLowerCase().contains(q)))
+          route,
     ];
   }
 
   int onDutyOn(String corridorId) => _feeders.values.where((f) => corridorIdOf(f) == corridorId).length;
 
-  void filterByCorridor(String? corridorId) {
-    if (corridorId == _corridorFilter) return;
-    _corridorFilter = corridorId;
+  int onDutyOnRoute(TransitRoute route) => route.corridorIds.fold(0, (sum, id) => sum + onDutyOn(id));
+
+  void filterByCorridor(String? corridorId) => filterByCorridors({if (corridorId != null) corridorId});
+
+  void filterByCorridors(Iterable<String> corridorIds) {
+    final next = Set<String>.unmodifiable(corridorIds.toSet());
+    if (setEquals(next, _corridorFilters)) return;
+    _corridorFilters = next;
     _notify();
   }
 

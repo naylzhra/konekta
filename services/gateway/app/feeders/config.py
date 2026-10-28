@@ -14,6 +14,16 @@ MIN_REPORT_INTERVAL_MS = 1000
 # Fixes less accurate than this are rejected rather than shown on the map.
 MAX_ACCURACY_M = 100.0
 
+# --- stop arrivals (GET /corridors/{id}/arrivals) --------------------------
+# Estimates divide the distance left along the route by this speed.
+# TODO: placeholder (~20 km/h) until measured from real trips.
+FEEDER_AVG_SPEED_MPS = 5.5
+# A feeder this far past a stop along the route still counts as arriving.
+ARRIVAL_PASSED_TOLERANCE_M = 50
+# Default and upper bound for the endpoint's max_eta_s.
+ARRIVALS_DEFAULT_MAX_ETA_S = 300
+ARRIVALS_MAX_ETA_S = 3600
+
 # --- IoT GPS devices (ESP32 + NEO-6M), app/routers/devices.py ---------------
 # A driver counts as on duty while their app keeps reporting (it reports only
 # between "Mulai Bertugas" and "Selesai Bertugas"; the latter calls

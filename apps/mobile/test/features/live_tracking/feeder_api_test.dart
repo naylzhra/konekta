@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:konekta_mobile/core/api/api_client.dart';
 import 'package:konekta_mobile/features/live_tracking/data/feeder_api.dart';
+import 'package:konekta_mobile/features/live_tracking/domain/feeder_models.dart';
 
 FeederApi _api(Future<http.Response> Function(http.Request request) handler) =>
     FeederApi(ApiClient(baseUrl: 'http://gateway', httpClient: MockClient(handler)));
@@ -33,6 +34,49 @@ void main() {
     final [corridor] = await api.listCorridors();
     expect(corridor.name, 'Koridor 1');
     expect(corridor.availableFeeders.map((f) => f.id), ['K1-02']);
+  });
+
+  test('route stops carry service info when set', () async {
+    final api = _api((request) async => _json({
+          'id': 'K1',
+          'name': 'Koridor 1',
+          'operating_hours': '05.00-21.00',
+          'operating_days': null,
+          'fare_from_idr': 2000,
+          'items': [
+            {'position': 1, 'name': 'Halte A', 'lat': -6.9, 'lng': 107.6},
+          ],
+        }, 200));
+
+    final route = await api.routeStops('K1');
+    expect((route.operatingHours, route.operatingDays, route.fareFromIdr), ('05.00-21.00', null, 2000));
+    expect(route.stops.single.name, 'Halte A');
+  });
+
+  test('arrivals per stop, with the token and direction', () async {
+    final api = _api((request) async {
+      expect(request.url.path, '/corridors/K1/arrivals');
+      expect(request.url.queryParameters, {'direction': 'backward'});
+      expect(request.headers['Authorization'], 'Bearer tok');
+      return _json({
+        'id': 'K1',
+        'direction': 'backward',
+        'items': [
+          {'position': 1, 'name': 'Halte A', 'arrivals': []},
+          {
+            'position': 2,
+            'name': 'Halte B',
+            'arrivals': [
+              {'feeder_id': 'K1-01', 'eta_s': 95, 'occupancy': 3, 'capacity': 8},
+            ],
+          },
+        ],
+      }, 200);
+    });
+
+    final stops = await api.arrivals('K1', 'tok', direction: RouteDirection.backward);
+    expect(stops.map((s) => s.arrivals.length), [0, 1]);
+    expect((stops[1].arrivals.single.feederId, stops[1].arrivals.single.etaS), ('K1-01', 95));
   });
 
   test('lists live feeders with the token', () async {

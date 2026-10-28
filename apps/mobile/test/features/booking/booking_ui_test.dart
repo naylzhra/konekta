@@ -8,7 +8,6 @@ import 'package:konekta_mobile/features/booking/domain/booking_failure.dart';
 import 'package:konekta_mobile/features/booking/domain/booking_models.dart';
 import 'package:konekta_mobile/features/booking/domain/booking_state_machine.dart';
 import 'package:konekta_mobile/features/booking/state/booking_controller.dart';
-import 'package:konekta_mobile/features/booking/state/trip_history_controller.dart';
 import 'package:konekta_mobile/features/booking/ui/booking_home_section.dart';
 import 'package:konekta_mobile/features/booking/ui/trips_view.dart';
 
@@ -36,23 +35,38 @@ void main() {
     await tester.pump();
   }
 
-  Future<void> pumpHome(WidgetTester tester) =>
-      pump(tester, BookingHomeSection(controller: controller, locations: const StubTripLocations()));
+  var plannerOpens = 0;
 
-  // The planner is its own route, opened from the Home search bar.
-  Future<void> openPlanner(WidgetTester tester) async {
-    await tester.tap(find.text(BookingStrings.homeSearchHint));
+  Future<void> pumpHome(WidgetTester tester) =>
+      pump(tester, BookingHomeSection(controller: controller, onOpenPlanner: () => plannerOpens++));
+
+  // The planner lives on the Trips tab.
+  Future<void> pumpTrips(WidgetTester tester) =>
+      pump(tester, TripsView(booking: controller, locations: const StubTripLocations()));
+
+  // Focusing the destination field opens the suggestions; picking one plans the trip.
+  Future<void> pickDestination(WidgetTester tester) async {
+    await tester.tap(find.byType(TextField));
     await tester.pump();
-    await tester.pump(const Duration(milliseconds: 500)); // route transition
+    await tester.tap(find.text(StubTripLocations.places.first.name));
+    await tester.pump();
   }
 
   // Disposes widgets so timers (plan expiry) don't outlive the test.
   Future<void> unmount(WidgetTester tester) => tester.pumpWidget(const SizedBox());
 
   group('Home', () {
-    testWidgets('asks for consent first, then shows the planner', (tester) async {
+    testWidgets('search bar and Pesan feeder open the planner', (tester) async {
+      plannerOpens = 0;
       await pumpHome(tester);
-      await openPlanner(tester);
+      await tester.tap(find.text(BookingStrings.homeSearchHint));
+      await tester.tap(find.text(BookingStrings.bookFeeder));
+      expect(plannerOpens, 2);
+      await unmount(tester);
+    });
+
+    testWidgets('asks for consent first, then shows the planner', (tester) async {
+      await pumpTrips(tester);
       expect(find.text(BookingStrings.consentTitle), findsOneWidget);
 
       await tester.tap(find.text(BookingStrings.consentAccept));
@@ -61,7 +75,7 @@ void main() {
 
       expect(repo.consents.single.granted, isTrue);
       expect(find.text(BookingStrings.consentTitle), findsNothing);
-      expect(find.text(StubTripLocations.places.first.name), findsOneWidget);
+      expect(find.text(BookingStrings.destinationHint), findsOneWidget);
       await unmount(tester);
     });
 
@@ -70,13 +84,9 @@ void main() {
       repo.onPlan = () async => [plan(expiresAt: DateTime.now().add(const Duration(minutes: 5)))];
       final created = Completer<Booking>();
       repo.onCreate = (_, __) => created.future;
-      await pumpHome(tester);
-      await openPlanner(tester);
+      await pumpTrips(tester);
 
-      await tester.tap(find.text(StubTripLocations.places.first.name));
-      await tester.pump();
-      await tester.tap(find.text(BookingStrings.confirmDestination));
-      await tester.pump();
+      await pickDestination(tester);
       expect(find.text(BookingStrings.planTitle), findsOneWidget);
       expect(find.text(BookingStrings.rupiah(5000)), findsOneWidget);
 
@@ -88,7 +98,7 @@ void main() {
 
       created.complete(booking(status: BookingStatus.requested));
       await tester.pump();
-      await tester.pump(const Duration(milliseconds: 500)); // planner closes, Home shows the booking
+      await tester.pump(); // the Trips tab now shows the booking instead of the planner
 
       expect(repo.createKeys, hasLength(1));
       expect(find.text(BookingStrings.statusLabel(BookingStatus.requested)), findsOneWidget);
@@ -107,13 +117,9 @@ void main() {
         bookedPlans.add(planId);
         return booking(status: BookingStatus.requested);
       };
-      await pumpHome(tester);
-      await openPlanner(tester);
+      await pumpTrips(tester);
 
-      await tester.tap(find.text(StubTripLocations.places.first.name));
-      await tester.pump();
-      await tester.tap(find.text(BookingStrings.confirmDestination));
-      await tester.pump();
+      await pickDestination(tester);
       expect(find.text(BookingStrings.planTitle), findsOneWidget);
       expect(find.text(BookingStrings.routeDetails), findsNWidgets(2));
 
@@ -130,13 +136,9 @@ void main() {
     testWidgets('Detail expands the route timeline in place', (tester) async {
       await repo.recordConsent(granted: true);
       repo.onPlan = () async => [plan(expiresAt: DateTime.now().add(const Duration(minutes: 5)))];
-      await pumpHome(tester);
-      await openPlanner(tester);
+      await pumpTrips(tester);
 
-      await tester.tap(find.text(StubTripLocations.places.first.name));
-      await tester.pump();
-      await tester.tap(find.text(BookingStrings.confirmDestination));
-      await tester.pump();
+      await pickDestination(tester);
       final ride = BookingStrings.rideLeg(BookingStrings.minutes(10), BookingStrings.distance(3000));
       expect(find.text(ride), findsNothing);
 
@@ -154,36 +156,73 @@ void main() {
     testWidgets('back from the route list returns to destination selection', (tester) async {
       await repo.recordConsent(granted: true);
       repo.onPlan = () async => [plan(expiresAt: DateTime.now().add(const Duration(minutes: 5)))];
-      await pumpHome(tester);
-      await openPlanner(tester);
+      await pumpTrips(tester);
 
-      await tester.tap(find.text(StubTripLocations.places.first.name));
-      await tester.pump();
-      await tester.tap(find.text(BookingStrings.confirmDestination));
-      await tester.pump();
+      await pickDestination(tester);
       expect(find.text(BookingStrings.planTitle), findsOneWidget);
 
       await tester.binding.handlePopRoute();
       await tester.pump();
       expect(find.text(BookingStrings.planTitle), findsNothing);
-      expect(find.text(BookingStrings.confirmDestination), findsOneWidget);
+      expect(find.byType(TextField), findsOneWidget);
       expect(controller.plans, isEmpty);
+      await unmount(tester);
+    });
+
+    testWidgets('suggestions show only while searching; back closes them first', (tester) async {
+      await repo.recordConsent(granted: true);
+      await pumpTrips(tester);
+      expect(find.text(StubTripLocations.places.first.name), findsNothing);
+
+      await tester.tap(find.byType(TextField));
+      await tester.pump();
+      expect(find.text(StubTripLocations.places.first.name), findsOneWidget);
+
+      await tester.binding.handlePopRoute();
+      await tester.pump();
+      expect(find.text(StubTripLocations.places.first.name), findsNothing);
+      expect(find.text(BookingStrings.plannerTitle), findsOneWidget); // still on the planner
       await unmount(tester);
     });
 
     testWidgets('no route shows the error without a retry', (tester) async {
       await repo.recordConsent(granted: true);
       repo.onPlan = () async => throw failure(BookingFailureCode.noRoute);
-      await pumpHome(tester);
-      await openPlanner(tester);
+      await pumpTrips(tester);
 
-      await tester.tap(find.text(StubTripLocations.places.first.name));
-      await tester.pump();
-      await tester.tap(find.text(BookingStrings.confirmDestination));
-      await tester.pump();
+      await pickDestination(tester);
 
       expect(find.text(BookingStrings.failure(BookingFailureCode.noRoute)), findsOneWidget);
       expect(find.text(BookingStrings.retry), findsNothing);
+      await unmount(tester);
+    });
+
+    testWidgets('no route suggests the nearest stop', (tester) async {
+      await repo.recordConsent(granted: true);
+      repo.onPlan = () async => throw const BookingException(
+            BookingFailureCode.noRoute,
+            nearestStop: NearestStopHint(
+              stop: Stop(
+                id: 's1',
+                type: StopType.staticStop,
+                name: 'Halte Dago',
+                location: GeoPoint(lat: -6.89, lng: 107.61),
+              ),
+              walkDistanceM: 640,
+              walkDurationS: 480,
+            ),
+          );
+      await pumpTrips(tester);
+
+      await pickDestination(tester);
+
+      expect(find.text(BookingStrings.failure(BookingFailureCode.noRoute)), findsOneWidget);
+      expect(find.text(BookingStrings.nearestStopTitle), findsOneWidget);
+      expect(find.text('Halte Dago'), findsOneWidget);
+      expect(
+        find.text(BookingStrings.nearestStopWalk(BookingStrings.durationFromSeconds(480), BookingStrings.distance(640))),
+        findsOneWidget,
+      );
       await unmount(tester);
     });
 
@@ -240,32 +279,23 @@ void main() {
   });
 
   group('Trips', () {
-    late TripHistoryController history;
+    testWidgets('is the planner when no booking is active', (tester) async {
+      await repo.recordConsent(granted: true);
+      await pumpTrips(tester);
 
-    setUp(() => history = TripHistoryController(repository: repo, live: controller));
-    tearDown(() => history.dispose());
-
-    testWidgets('lists history and keeps the active trip out of it', (tester) async {
-      repo.onGetActive = () async => booking(id: 'active', status: BookingStatus.confirmed, version: 2);
-      repo.onList = (_) async => BookingPage(items: [
-            booking(id: 'active', status: BookingStatus.confirmed, version: 2),
-            booking(id: 'done', status: BookingStatus.completed, version: 5),
-          ]);
-      await pump(tester, TripsView(booking: controller, history: history));
-      await tester.pump();
-
-      expect(find.text(BookingStrings.statusLabel(BookingStatus.confirmed)), findsOneWidget); // active card
-      expect(find.text(BookingStrings.statusLabel(BookingStatus.completed)), findsOneWidget); // history chip
-      expect(find.text(BookingStrings.loadMore), findsNothing);
+      expect(find.text(BookingStrings.plannerTitle), findsOneWidget);
+      expect(find.text(BookingStrings.destinationHint), findsOneWidget);
       await unmount(tester);
     });
 
-    testWidgets('empty history', (tester) async {
-      await pump(tester, TripsView(booking: controller, history: history));
-      await tester.pump();
+    testWidgets('shows the active booking instead of the planner', (tester) async {
+      await repo.recordConsent(granted: true);
+      repo.onGetActive = () async => booking(status: BookingStatus.confirmed, version: 2);
+      await pumpTrips(tester);
 
-      expect(find.text(BookingStrings.noActiveTrip), findsOneWidget);
-      expect(find.text(BookingStrings.historyEmpty), findsOneWidget);
+      expect(find.text(BookingStrings.activeTripTitle), findsOneWidget);
+      expect(find.text(BookingStrings.statusLabel(BookingStatus.confirmed)), findsOneWidget);
+      expect(find.byType(TextField), findsNothing);
       await unmount(tester);
     });
   });

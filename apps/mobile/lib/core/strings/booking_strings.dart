@@ -31,7 +31,6 @@ class BookingStrings {
   static const destinationHint = 'Cari tujuan';
   static const swapEndpoints = 'Tukar asal dan tujuan';
   static const suggestedPlaces = 'Saran tempat';
-  static const confirmDestination = 'Konfirmasi Tujuan';
   static const noDestinationMatch = 'Tujuan tidak ditemukan.';
   static const placeholderLocations = 'Data lokasi contoh (belum ada GPS & pencarian alamat)';
   static const findRoute = 'Cari rute';
@@ -51,6 +50,9 @@ class BookingStrings {
   static const routeDetails = 'Detail';
   static const hideRouteDetails = 'Tutup';
   static String walkLeg(String duration, String distance) => 'Jalan kaki $duration ($distance)';
+  static const nearestStopTitle = 'Naik dari titik terdekat';
+  static String nearestStopWalk(String? duration, String distance) =>
+      duration == null ? 'Sekitar $distance dari lokasimu' : 'Jalan kaki $duration ($distance) dari lokasimu';
   static String rideLeg(String duration, String distance) => 'Naik feeder $duration ($distance)';
   static String feederArrivesIn(String duration) => 'Feeder terdekat tiba dalam $duration';
   static const walk = 'Jalan kaki';
@@ -116,13 +118,6 @@ class BookingStrings {
   static const offline = 'Koneksi terputus. Menyambungkan ulang...';
   static const syncing = 'Memperbarui status...';
   static const retry = 'Coba lagi';
-
-  // Trips
-  static const tripsTitle = 'Perjalanan';
-  static const historyTitle = 'Riwayat';
-  static const historyEmpty = 'Belum ada riwayat perjalanan.';
-  static const loadMore = 'Muat lebih banyak';
-  static const noActiveTrip = 'Tidak ada perjalanan aktif.';
 
   static String failure(BookingFailureCode code) => switch (code) {
         BookingFailureCode.invalidTransition => 'Status perjalanan sudah berubah. Data diperbarui.',

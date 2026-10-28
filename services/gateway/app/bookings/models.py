@@ -71,6 +71,8 @@ class TripPlan(BaseModel):
     pickup_stop: Optional[Stop] = None
     dropoff_stop: Optional[Stop] = None
     corridor_id: Optional[str] = None
+    # Passenger-facing route code (e.g. FD-1) for display; not stored
+    route_code: Optional[str] = None
     # Direction the corridor is travelled in for this trip.
     direction: Optional[Literal["forward", "backward"]] = None
     # nearest available feeder's ETA to the pickup stop at planning time; not stored
@@ -171,9 +173,19 @@ class ErrorCode(StrEnum):
     INVALID_CURSOR = "invalid_cursor"
 
 
+class NearestStopHint(BaseModel):
+    """Closest boardable stop to the origin, offered with a no_route error."""
+
+    stop: Stop
+    walk_distance_m: float
+    # null when routing was unavailable; walk_distance_m is then straight-line
+    walk_duration_s: Optional[float] = None
+
+
 class ErrorDetail(BaseModel):
     code: ErrorCode
     message: str
+    nearest_stop: Optional[NearestStopHint] = None  # no_route only
 
 
 # --- WebSocket events (envelope: app/websocket/envelope.py) ----------------

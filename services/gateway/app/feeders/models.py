@@ -36,6 +36,8 @@ class CorridorWithFeeders(BaseModel):
     id: str
     name: str
     is_dummy: bool = False
+    # Corridors sharing a code are one route to passengers (migration 015).
+    route_code: Optional[str] = None
     feeders: list[FeederOption]
 
 
@@ -54,7 +56,31 @@ class CorridorStops(BaseModel):
     id: str
     name: str
     is_dummy: bool = False
+    # Service info for the route page; null until set (migration 014).
+    operating_hours: Optional[str] = None
+    operating_days: Optional[str] = None
+    fare_from_idr: Optional[int] = None
     items: list[RouteStop]
+
+
+class StopArrival(BaseModel):
+    feeder_id: str
+    # Estimate from the distance left along the route; see app/feeders/config.py.
+    eta_s: int
+    occupancy: int
+    capacity: int
+
+
+class StopArrivals(BaseModel):
+    position: int
+    name: str
+    arrivals: list[StopArrival]  # soonest first
+
+
+class CorridorArrivals(BaseModel):
+    id: str
+    direction: Literal["forward", "backward"]
+    items: list[StopArrivals]  # every route stop, in travel order
 
 
 class RoutePoint(BaseModel):

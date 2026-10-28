@@ -151,6 +151,45 @@ void main() {
     }
   });
 
+  test('no_route carries the nearest stop hint', () async {
+    final repo = _repo((_) async => _json({
+          'detail': {
+            'code': 'no_route',
+            'message': 'x',
+            'nearest_stop': {
+              'stop': {
+                'id': 's1',
+                'type': 'virtual',
+                'name': 'Titik Dago',
+                'location': {'lat': -6.89, 'lng': 107.61},
+              },
+              'walk_distance_m': 640.0,
+              'walk_duration_s': 512.0,
+            },
+          },
+        }, 422));
+    await expectLater(
+      repo.planTrip(origin: const GeoPoint(lat: 0, lng: 0), destination: const GeoPoint(lat: 0, lng: 0)),
+      throwsA(isA<BookingException>()
+          .having((e) => e.code, 'code', BookingFailureCode.noRoute)
+          .having((e) => e.nearestStop?.stop.name, 'stop', 'Titik Dago')
+          .having((e) => e.nearestStop?.stop.type, 'type', StopType.virtualStop)
+          .having((e) => e.nearestStop?.walkDurationS, 'walk', 512.0)),
+    );
+  });
+
+  test('a malformed nearest stop hint keeps the error', () async {
+    final repo = _repo((_) async => _json({
+          'detail': {'code': 'no_route', 'message': 'x', 'nearest_stop': {'stop': 'oops'}},
+        }, 422));
+    await expectLater(
+      repo.planTrip(origin: const GeoPoint(lat: 0, lng: 0), destination: const GeoPoint(lat: 0, lng: 0)),
+      throwsA(isA<BookingException>()
+          .having((e) => e.code, 'code', BookingFailureCode.noRoute)
+          .having((e) => e.nearestStop, 'hint', isNull)),
+    );
+  });
+
   test('untyped errors map by status', () async {
     expect(
       _repo((_) async => _json({'detail': 'Not authenticated'}, 401)).getActiveBooking(),

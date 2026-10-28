@@ -111,7 +111,7 @@ class _PassengerTabsState extends State<_PassengerTabs> {
       ],
       tabs: [
         HomeTab(map: _map!, fleet: _fleet!),
-        const TripsTab(),
+        const TripsTab(index: 1),
         MapTab(
           controller: _map!,
           fleet: _fleet!,
@@ -120,6 +120,10 @@ class _PassengerTabsState extends State<_PassengerTabs> {
                   BookingScope.of(context).session.token)
               .load,
           loadRoutePath: _bothDirections(FeederApi(BookingScope.of(context).session.apiClient)),
+          loadRouteStops: (corridorId, direction) =>
+              FeederApi(BookingScope.of(context).session.apiClient).routeStops(corridorId, direction: direction),
+          loadArrivals: (corridorId, direction) => FeederApi(BookingScope.of(context).session.apiClient)
+              .arrivals(corridorId, BookingScope.of(context).session.token, direction: direction),
         ),
         const ProfileTab(),
       ],
