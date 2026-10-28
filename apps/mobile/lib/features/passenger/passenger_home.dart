@@ -111,7 +111,7 @@ class _PassengerTabsState extends State<_PassengerTabs> {
       ],
       tabs: [
         HomeTab(map: _map!, fleet: _fleet!),
-        const TripsTab(),
+        const TripsTab(index: 1),
         MapTab(
           controller: _map!,
           fleet: _fleet!,

@@ -18,34 +18,27 @@ import 'home_widgets.dart';
 
 /// Home tab content: greeting, search, map preview, and quick actions.
 /// Booking itself (consent -> destination -> plan -> confirm) lives in
-/// [_TripPlannerPage]; once a booking exists, its live status replaces the
-/// search and quick actions here (DESIGN.md §1).
+/// [TripPlannerView] on the Trips tab; once a booking exists, its live status
+/// replaces the search and quick actions here (DESIGN.md §1).
 class BookingHomeSection extends StatelessWidget {
   const BookingHomeSection({
     super.key,
     required this.controller,
-    required this.locations,
+    required this.onOpenPlanner,
     this.onOpenMap,
     this.mapPreview,
   });
 
   final BookingController controller;
-  final TripLocations locations;
+
+  /// Switches to the Trips tab, where the planner lives.
+  final VoidCallback onOpenPlanner;
 
   /// Switches to the Map tab (Route Info, locate button).
   final VoidCallback? onOpenMap;
 
   /// Live map for the hero; a stylised placeholder when null.
   final Widget? mapPreview;
-
-  void _openPlanner(BuildContext context) {
-    Navigator.of(context)
-        .push<void>(
-          MaterialPageRoute(builder: (_) => _TripPlannerPage(controller: controller, locations: locations)),
-        )
-        // Drop unconfirmed plans so reopening starts clean.
-        .then((_) => controller.clearPlans());
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -74,7 +67,7 @@ class BookingHomeSection extends StatelessWidget {
             const Text(BookingStrings.homeSubtitle, style: AppTextStyles.bodyMd),
             const SizedBox(height: AppSpacing.lg),
             if (!hasBooking) ...[
-              HomeSearchBar(onTap: () => _openPlanner(context)),
+              HomeSearchBar(onTap: onOpenPlanner),
               const SizedBox(height: AppSpacing.md),
             ],
             HomeMapHero(nearbyFeeders: HomeStats.nearbyFeeders, onLocate: onOpenMap, map: mapPreview),
@@ -93,7 +86,7 @@ class BookingHomeSection extends StatelessWidget {
                         icon: Icons.directions_car_filled_outlined,
                         label: BookingStrings.bookFeeder,
                         filled: true,
-                        onTap: () => _openPlanner(context),
+                        onTap: onOpenPlanner,
                       ),
                     ),
                     const SizedBox(width: AppSpacing.md),
@@ -114,69 +107,39 @@ class BookingHomeSection extends StatelessWidget {
   }
 }
 
-/// Full-screen booking flow. Closes itself once a booking exists so Home shows
-/// its live status.
-class _TripPlannerPage extends StatefulWidget {
-  const _TripPlannerPage({required this.controller, required this.locations});
+/// Booking flow: location consent, then the trip planner. Hosted by the
+/// Trips tab; once a booking exists the tab shows it instead.
+class TripPlannerView extends StatelessWidget {
+  const TripPlannerView({super.key, required this.controller, required this.locations, this.active = true});
 
   final BookingController controller;
   final TripLocations locations;
 
-  @override
-  State<_TripPlannerPage> createState() => _TripPlannerPageState();
-}
-
-class _TripPlannerPageState extends State<_TripPlannerPage> {
-  bool _closing = false;
-
-  void _closeOnce() {
-    if (_closing) return;
-    _closing = true;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) Navigator.of(context).maybePop();
-    });
-  }
+  /// False while another tab is showing: Back then belongs to that tab.
+  final bool active;
 
   @override
   Widget build(BuildContext context) {
-    final controller = widget.controller;
-    // Back from the route list returns to destination selection first.
     return ListenableBuilder(
       listenable: controller,
-      builder: (context, child) => PopScope(
-        canPop: controller.planning == PlanningStatus.idle,
-        onPopInvokedWithResult: (didPop, _) {
-          if (!didPop) controller.clearPlans();
-        },
-        child: child!,
-      ),
-      child: Scaffold(
-        appBar: AppBar(
-          centerTitle: true,
-          title: Text(
-            BookingStrings.plannerTitle,
-            style: AppTextStyles.headlineMd.copyWith(fontWeight: FontWeight.w700, color: AppColors.inverseSurface),
-          ),
-        ),
-        body: SafeArea(
-          bottom: false,
-          child: ListenableBuilder(
-            listenable: controller,
-            builder: (context, _) {
-              if (controller.current != null) _closeOnce();
-              if (controller.consent == ConsentState.required) {
-                return ListView(
-                  padding: const EdgeInsets.all(AppSpacing.containerMargin),
-                  children: [
-                    _ConsentCard(controller: controller),
-                  ],
-                );
-              }
-              return _TripPlanner(controller: controller, locations: widget.locations);
-            },
-          ),
-        ),
-      ),
+      builder: (context, _) {
+        if (controller.consent == ConsentState.required) {
+          return ListView(
+            padding: const EdgeInsets.all(AppSpacing.containerMargin),
+            children: [
+              _ConsentCard(controller: controller),
+            ],
+          );
+        }
+        // Back from the route list returns to destination selection first.
+        return PopScope(
+          canPop: !active || controller.planning == PlanningStatus.idle,
+          onPopInvokedWithResult: (didPop, _) {
+            if (!didPop) controller.clearPlans();
+          },
+          child: _TripPlanner(controller: controller, locations: locations, active: active),
+        );
+      },
     );
   }
 }
@@ -235,10 +198,11 @@ class _ConsentCardState extends State<_ConsentCard> {
 }
 
 class _TripPlanner extends StatefulWidget {
-  const _TripPlanner({required this.controller, required this.locations});
+  const _TripPlanner({required this.controller, required this.locations, required this.active});
 
   final BookingController controller;
   final TripLocations locations;
+  final bool active;
 
   @override
   State<_TripPlanner> createState() => _TripPlannerState();
@@ -268,6 +232,13 @@ class _TripPlannerState extends State<_TripPlanner> {
     widget.controller.addListener(_showNearestStop);
     _loadOrigin();
     _search('');
+  }
+
+  @override
+  void didUpdateWidget(_TripPlanner oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Leaving the tab closes the suggestion list (and the keyboard).
+    if (oldWidget.active && !widget.active) _queryFocus.unfocus();
   }
 
   @override
@@ -472,7 +443,7 @@ class _TripPlannerState extends State<_TripPlanner> {
     // over it. While searching, the suggestion list covers the map.
     return PopScope(
       // Back closes the suggestion list before leaving the page.
-      canPop: !searching,
+      canPop: !(widget.active && searching),
       onPopInvokedWithResult: (didPop, _) {
         if (!didPop) _queryFocus.unfocus();
       },

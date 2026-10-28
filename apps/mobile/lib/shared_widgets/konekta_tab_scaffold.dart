@@ -3,16 +3,20 @@ import 'package:flutter/material.dart';
 import 'konekta_navbar.dart';
 
 
-/// Lets a tab switch to another tab (e.g. Home -> Map) without owning the index.
+/// Lets a tab switch to another tab (e.g. Home -> Map) without owning the
+/// index, and tells it which tab is showing (all tabs stay mounted).
 class KonektaTabs extends InheritedWidget {
-  const KonektaTabs({super.key, required this.select, required super.child});
+  const KonektaTabs({super.key, required this.select, required this.index, required super.child});
 
   final ValueChanged<int> select;
+
+  /// The tab currently shown.
+  final int index;
 
   static KonektaTabs? maybeOf(BuildContext context) => context.dependOnInheritedWidgetOfExactType<KonektaTabs>();
 
   @override
-  bool updateShouldNotify(KonektaTabs oldWidget) => false;
+  bool updateShouldNotify(KonektaTabs oldWidget) => oldWidget.index != index;
 }
 
 class KonektaTabScaffold extends StatefulWidget {
@@ -54,6 +58,7 @@ class _KonektaTabScaffoldState extends State<KonektaTabScaffold> {
         body: SafeArea(
           child: KonektaTabs(
             select: _onTabSelected,
+            index: _currentIndex,
             child: IndexedStack(index: _currentIndex, children: widget.tabs),
           ),
         ),

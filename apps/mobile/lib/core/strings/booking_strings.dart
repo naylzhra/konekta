@@ -119,13 +119,6 @@ class BookingStrings {
   static const syncing = 'Memperbarui status...';
   static const retry = 'Coba lagi';
 
-  // Trips
-  static const tripsTitle = 'Perjalanan';
-  static const historyTitle = 'Riwayat';
-  static const historyEmpty = 'Belum ada riwayat perjalanan.';
-  static const loadMore = 'Muat lebih banyak';
-  static const noActiveTrip = 'Tidak ada perjalanan aktif.';
-
   static String failure(BookingFailureCode code) => switch (code) {
         BookingFailureCode.invalidTransition => 'Status perjalanan sudah berubah. Data diperbarui.',
         BookingFailureCode.activeBookingExists => 'Kamu masih punya perjalanan aktif.',

@@ -20,7 +20,8 @@ class HomeTab extends StatefulWidget {
 }
 
 class _HomeTabState extends State<HomeTab> {
-  /// Index of the Map tab in [PassengerMain].
+  /// Indexes of the Trips and Map tabs in [PassengerMain].
+  static const _tripsTabIndex = 1;
   static const _mapTabIndex = 2;
 
   BookingController? _booking;
@@ -61,7 +62,7 @@ class _HomeTabState extends State<HomeTab> {
     final scope = BookingScope.of(context);
     return BookingHomeSection(
       controller: scope.dependencies.booking,
-      locations: scope.locations,
+      onOpenPlanner: () => KonektaTabs.maybeOf(context)?.select(_tripsTabIndex),
       onOpenMap: () => KonektaTabs.maybeOf(context)?.select(_mapTabIndex),
       mapPreview: HomeMapPreview(controller: widget.map, fleet: widget.fleet),
     );
