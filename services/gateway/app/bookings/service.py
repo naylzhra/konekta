@@ -13,6 +13,7 @@ from uuid import UUID
 
 from app.bookings import config
 from app.bookings.clients import (
+    FeederPosition,
     FeederPositionProvider,
     RouteResult,
     RoutingClient,
@@ -138,30 +139,46 @@ class BookingService:
     async def plan_trip(self, user_id: UUID, request: TripPlanRequest) -> TripPlansResponse:
         await self._require_consent(user_id)
 
+        for point in (request.origin, request.destination):
+            if not (-7.05 <= point.lat <= -6.80 and 107.50 <= point.lng <= 107.75):
+                raise BookingError(ErrorCode.OUTSIDE_SERVICE_AREA, 422, "Outside Bandung service area")
+
+        match = await self._stops.match_corridor(request.origin, request.destination)
+        if match is None:
+            raise BookingError(ErrorCode.NO_ROUTE, 422, "No feeder corridor serves both points")
+
         pickup = await self._stops.assign_pickup_stop(
-            StopAssignmentRequest(location=request.origin, seats=request.seats)
+            StopAssignmentRequest(location=request.origin, seats=request.seats,
+                                  corridor_id=match.corridor_id, direction=match.direction)
         )
         dropoff = await self._stops.assign_dropoff_stop(
-            StopAssignmentRequest(location=request.destination, seats=request.seats)
+            StopAssignmentRequest(location=request.destination, seats=request.seats,
+                                  corridor_id=match.corridor_id, direction=match.direction)
         )
         if pickup is None or dropoff is None:
             raise BookingError(ErrorCode.NO_ROUTE, 422, "Outside the service area")
         if pickup.id == dropoff.id:
             raise BookingError(ErrorCode.NO_ROUTE, 422, "Destination is too close to need a feeder")
 
-        walk_to = haversine_m(request.origin, pickup.location)
-        walk_from = haversine_m(dropoff.location, request.destination)
+        walk_to = (
+            await self._route([request.origin, pickup.location], "walking")
+            if haversine_m(request.origin, pickup.location) > 1
+            else RouteResult(distance_m=0, duration_s=0)
+        )
+        walk_from = (
+            await self._route([dropoff.location, request.destination], "walking")
+            if haversine_m(dropoff.location, request.destination) > 1
+            else RouteResult(distance_m=0, duration_s=0)
+        )
         ride = await self._route([pickup.location, dropoff.location], "driving")
         legs = [
-            TripLeg(mode=LegMode.WALK, distance_m=walk_to, duration_s=walk_to / config.WALK_SPEED_MPS),
+            TripLeg(mode=LegMode.WALK, distance_m=walk_to.distance_m, duration_s=walk_to.duration_s),
             TripLeg(mode=LegMode.FEEDER, distance_m=ride.distance_m, duration_s=ride.duration_s),
-            TripLeg(mode=LegMode.WALK, distance_m=walk_from, duration_s=walk_from / config.WALK_SPEED_MPS),
+            TripLeg(mode=LegMode.WALK, distance_m=walk_from.distance_m, duration_s=walk_from.duration_s),
         ]
 
         nearest_feeder_eta_s: Optional[int] = None
-        feeders = await self._feeders.nearest(
-            pickup.location.lat, pickup.location.lng, config.FEEDER_SEARCH_RADIUS_M, pickup.corridor_id, limit=1
-        )
+        feeders = await self._eligible_feeders(pickup, match.direction, request.seats)
         if feeders:
             to_pickup = await self._route([feeders[0].location, pickup.location], "driving")
             nearest_feeder_eta_s = int(to_pickup.duration_s)
@@ -180,6 +197,7 @@ class BookingService:
             pickup_stop=pickup,
             dropoff_stop=dropoff,
             corridor_id=pickup.corridor_id,
+            direction=match.direction,
             nearest_feeder_eta_s=nearest_feeder_eta_s,
             expires_at=self._clock() + timedelta(seconds=config.PLAN_TTL_S),
         )
@@ -287,25 +305,26 @@ class BookingService:
         plan = plan_record.plan
 
         pickup = plan.pickup_stop
-        if pickup is None or (pickup.valid_until is not None and pickup.valid_until <= self._clock()):
+        if pickup is None or not await self._stops.is_active(pickup):
             pickup = await self._stops.assign_pickup_stop(
-                StopAssignmentRequest(location=plan.origin, seats=record.booking.seats)
+                StopAssignmentRequest(location=plan.origin, seats=record.booking.seats,
+                                      corridor_id=plan.corridor_id, direction=plan.direction)
             )
             if pickup is not None:
                 await self._repo.upsert_stop(pickup)
         dropoff = plan.dropoff_stop
+        if dropoff is None or not await self._stops.is_active(dropoff):
+            dropoff = await self._stops.assign_dropoff_stop(
+                StopAssignmentRequest(location=plan.destination, seats=record.booking.seats,
+                                      corridor_id=plan.corridor_id, direction=plan.direction)
+            )
+            if dropoff is not None:
+                await self._repo.upsert_stop(dropoff)
         if pickup is None or dropoff is None:
             await self._apply(booking_id, BookingEvent.MATCH_FAILED)
             return None
 
-        seats = record.booking.seats
-        candidates = [
-            feeder
-            for feeder in await self._feeders.nearest(
-                pickup.location.lat, pickup.location.lng, config.FEEDER_SEARCH_RADIUS_M, pickup.corridor_id
-            )
-            if feeder.capacity - feeder.occupancy >= seats
-        ]
+        candidates = await self._eligible_feeders(pickup, plan.direction, record.booking.seats)
         if not candidates:
             await self._apply(booking_id, BookingEvent.MATCH_FAILED)
             return None
@@ -327,6 +346,33 @@ class BookingService:
                 "eta_to_pickup_s": eta_s,
             },
         )
+
+    async def _eligible_feeders(self, pickup: Stop, direction: Optional[str], seats: int) -> list[FeederPosition]:
+        """On-duty feeders with room that travel the trip's direction and have
+        not yet passed the pickup stop, the one closest behind it first."""
+        nearby = [
+            feeder
+            for feeder in await self._feeders.nearest(
+                pickup.location.lat, pickup.location.lng, config.FEEDER_SEARCH_RADIUS_M, pickup.corridor_id
+            )
+            if feeder.capacity - feeder.occupancy >= seats
+            # Drivers on older app versions report no direction: forward.
+            and (direction is None or (feeder.direction or "forward") == direction)
+        ]
+        if direction is None or pickup.corridor_id is None or not nearby:
+            return nearby
+        pickup_m, *feeder_m = await self._stops.progress_m(
+            pickup.corridor_id, direction, [pickup.location, *(f.location for f in nearby)]
+        )
+        if pickup_m is None:
+            return nearby
+        behind = [
+            (pickup_m - along, feeder)
+            for feeder, along in zip(nearby, feeder_m)
+            if along is None or along <= pickup_m + config.FEEDER_PASSED_TOLERANCE_M
+        ]
+        behind.sort(key=lambda item: item[0] if item[0] is not None else float("inf"))
+        return [feeder for _, feeder in behind]
 
     async def cancel(self, user_id: UUID, booking_id: UUID, reason: Optional[str]) -> Booking:
         record = await self._get_owned(user_id, booking_id)

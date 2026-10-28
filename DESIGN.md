@@ -154,6 +154,14 @@ Other tabs (Map) get the shared WS via `BookingScope.of(context).session.wsClien
 - Redis: `feeders:geo` (GEO), `feeders:pos:<id>` (JSON `FeederPosition`, TTL 30 s = offline after 30 s without a report). No position history is persisted (§8). Service area = Bandung Raya, same box as `StubStopAssigner`.
 - Driver app reports every ~5 s while on duty via a foreground service (notification shown); REST rather than a WS message so §5.1 (client → server types) stays unchanged.
 
+### 5.8.1 IoT GPS devices (gateway) — owned by IoT integration
+- `POST /devices/position`, headers `X-Device-Id` + `Authorization: Bearer <device token>`, body `{lat, lng, recorded_at (ISO 8601 with tz), accuracy_m, satellites?, heading?, speed_kmh?}` → `{feeder_id, updated_at, primary}`. Errors: 401 `invalid_device` (unknown/inactive device or wrong token, same response for each), 409 `off_duty`, 422 `outside_service_area` / `inaccurate_position` / `no_fix` (< 4 satellites) / `stale_fix` (older than 10 s or > 5 s in the future), 429 `too_frequent` (< 0.5 s).
+- One device per feeder (`013_feeder_devices.sql`); token stored as SHA-256. Provision with `python -m app.cli.create_device --device-id <id> --feeder <feeder_id>`.
+- **Source choice** (`FeederTrackingService`, one place): the device is primary while the driver is on duty and its last `IOT_RECOVERY_FIXES` (3) fixes were valid with no gap ≥ `IOT_FRESH_S` (10 s). While it is primary, driver-app reports return 200 as usual but aren't published. A gap, or one invalid fix, hands back to the app on its next report; the device takes over again after 3 valid fixes in a row. No background job: everything is Redis TTLs.
+- On duty = the driver app reported in the last 30 s and hasn't called `/feeders/me/offline` (`feeders:duty:<driver_id>`). Fixes from a device whose driver is off duty are rejected, so the device alone never brings a feeder online.
+- Output is unchanged: same `feeders:pos:<id>` / `feeders:geo`, same `feeder.position` payload on `feeder:<id>` and `corridor:<id>`, so the driver app, the passenger app and the dashboard need no changes. `updated_at` is always server time.
+- Redis: `feeders:iot:<feeder_id>` (valid-fix streak, TTL 10 s), `feeders:duty:<driver_id>` (TTL 30 s), `feeders:rate:device:<device_id>`.
+
 ### 5.9 Live tracking ↔ booking — what each side relies on
 Changes by live tracking that touch booking, and what live tracking needs from booking. Booking owner: please confirm or push back here.
 

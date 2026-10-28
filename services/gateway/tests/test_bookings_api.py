@@ -106,13 +106,13 @@ async def test_plan_far_from_static_stops_gets_virtual_stop(client):
     assert trip["pickup_stop"]["valid_until"] is not None
 
 
-async def test_plan_outside_area_is_no_route(client):
+async def test_plan_outside_area_has_specific_error(client):
     await give_consent(client)
     response = await client.post(
         "/trip-plans", json={"origin": OUTSIDE_AREA, "destination": DESTINATION}, headers=auth(P1)
     )
     assert response.status_code == 422
-    assert response.json()["detail"]["code"] == "no_route"
+    assert response.json()["detail"]["code"] == "outside_service_area"
 
 
 async def test_plan_too_short_is_no_route(client):
@@ -151,6 +151,7 @@ async def test_create_booking_matches_and_publishes_in_order(client, publisher):
 
     active = (await client.get("/bookings/active", headers=auth(P1))).json()
     assert active["id"] == created["id"]
+    assert active["corridor_id"] == trip["corridor_id"]
     assert active["status"] == "CONFIRMED"
     assert active["version"] == 3
     assert active["feeder_id"] == "stub-feeder-1"

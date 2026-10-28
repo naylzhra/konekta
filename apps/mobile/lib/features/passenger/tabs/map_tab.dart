@@ -4,21 +4,32 @@ import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
 
 import '../../../core/location/user_location_provider.dart';
+import '../../../core/navigation/nav_instructions.dart';
 import '../../../core/strings/live_tracking_strings.dart';
 import '../../../core/theme/konekta_theme.dart';
+import '../../booking/domain/booking_models.dart';
+import '../../booking/domain/booking_state_machine.dart';
+import '../../booking/domain/journey_models.dart';
+import '../../booking/state/booking_controller.dart';
 import '../../live_tracking/domain/feeder_models.dart';
 import '../../live_tracking/state/feeder_fleet_controller.dart';
 import '../../live_tracking/state/passenger_map_controller.dart';
 import '../../live_tracking/ui/map_markers.dart';
 import '../../live_tracking/ui/service_area_map.dart';
+import '../../live_tracking/ui/route_stops_page.dart';
+import '../../../shared_widgets/nav_banner.dart';
 
 /// Every on-duty feeder (searchable by route), the passenger's booked feeder
 /// highlighted, their pickup stop and (if they allow it) their own location.
 class MapTab extends StatefulWidget {
-  const MapTab({super.key, required this.controller, required this.fleet});
+  const MapTab({super.key, required this.controller, required this.fleet, required this.loadRoutePath,
+    this.booking, this.loadJourney});
 
   final PassengerMapController controller;
   final FeederFleetController fleet;
+  final Future<List<LatLng>> Function(String corridorId) loadRoutePath;
+  final BookingController? booking;
+  final Future<Journey> Function(String bookingId, GeoPoint? location)? loadJourney;
 
   @override
   State<MapTab> createState() => _MapTabState();
@@ -36,6 +47,19 @@ class _MapTabState extends State<MapTab> {
 
   /// Fleet feeder whose info card is open.
   String? _selectedFeederId;
+  final Map<String, List<LatLng>> _routePaths = {};
+  final Set<String> _loadingPaths = {};
+  final Set<String> _failedPaths = {};
+  Journey? _journey;
+  String? _journeyKey;
+  LatLng? _lastJourneyLocation;
+  DateTime? _lastJourneyAt;
+  int _journeyRequest = 0;
+
+  /// While a journey is active the camera follows the passenger, heading-up,
+  /// until they pan the map themselves.
+  bool _following = true;
+  static const _navZoom = 17.5;
 
   PassengerMapController get _map => widget.controller;
   FeederFleetController get _fleet => widget.fleet;
@@ -44,6 +68,12 @@ class _MapTabState extends State<MapTab> {
   void initState() {
     super.initState();
     _map.addListener(_autoFrame);
+    widget.booking?.addListener(_maybeLoadJourney);
+    _fleet.addListener(_loadAvailableRoutes);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _loadAvailableRoutes();
+      _maybeLoadJourney();
+    });
     // Permission may have changed in system settings.
     _lifecycle = AppLifecycleListener(onResume: _map.refreshPermission);
   }
@@ -51,6 +81,8 @@ class _MapTabState extends State<MapTab> {
   @override
   void dispose() {
     _map.removeListener(_autoFrame);
+    widget.booking?.removeListener(_maybeLoadJourney);
+    _fleet.removeListener(_loadAvailableRoutes);
     _lifecycle.dispose();
     _mapController.dispose();
     super.dispose();
@@ -59,10 +91,15 @@ class _MapTabState extends State<MapTab> {
   void _onMapReady() {
     _mapReady = true;
     _autoFrame();
+    if (_map.trip == null && _routePaths.isNotEmpty) {
+      _fit(_routePaths.values.expand((points) => points).toList());
+    }
   }
 
   void _autoFrame() {
+    _maybeLoadJourney();
     if (!_mapReady) return;
+    if (_followMe()) return;
     final feeder = _map.feeder;
     if (feeder != null && feeder.feederId != _framedFeederId) {
       _framedFeederId = feeder.feederId;
@@ -77,25 +114,132 @@ class _MapTabState extends State<MapTab> {
     }
   }
 
+  /// Keeps the camera on the passenger during an active journey; false when
+  /// not following, so the caller frames the trip instead.
+  bool _followMe() {
+    final me = _map.myLocation;
+    if (_journey == null || !_following || me == null) return false;
+    final heading = me.headingDeg;
+    _mapController.moveAndRotate(
+        LatLng(me.lat, me.lng), _navZoom, heading == null ? 0 : -heading);
+    return true;
+  }
+
   List<LatLng> _tripPoints() {
     final feeder = _map.feeder;
     final trip = _map.trip;
     return [
       if (feeder != null) LatLng(feeder.lat, feeder.lng),
       if (trip?.pickup != null && !trip!.onBoard) trip.pickup!,
+      if (_journey != null)
+        ..._journey!.current.points.map((point) => LatLng(point.lat, point.lng)),
     ];
   }
 
+  void _maybeLoadJourney() {
+    final booking = widget.booking?.current;
+    final load = widget.loadJourney;
+    if (!mounted || booking == null || load == null ||
+        (!booking.isActive && booking.status != BookingStatus.completed)) {
+      if (_journey != null) {
+        setState(() => _journey = null);
+        if (_mapReady) _mapController.rotate(0);
+      }
+      return;
+    }
+    final stopUpdate = widget.booking?.pickupStopUpdate;
+    final key = '${booking.id}:${booking.status.wire}:${stopUpdate?.location.lat}:${stopUpdate?.location.lng}';
+    final me = _map.myLocation;
+    final here = me == null ? null : LatLng(me.lat, me.lng);
+    final now = DateTime.now();
+    final moved = here != null && _lastJourneyLocation != null &&
+        const Distance().as(LengthUnit.Meter, here, _lastJourneyLocation!) >= 50;
+    final elapsed = _lastJourneyAt == null || now.difference(_lastJourneyAt!) >= const Duration(seconds: 20);
+    if (key == _journeyKey && !(moved && elapsed)) return;
+    _journeyKey = key;
+    _lastJourneyLocation = here;
+    _lastJourneyAt = now;
+    final request = ++_journeyRequest;
+    load(booking.id, me == null ? null : GeoPoint(lat: me.lat, lng: me.lng)).then((journey) {
+      if (!mounted || request != _journeyRequest) return;
+      final first = _journey == null;
+      setState(() {
+        _journey = journey;
+        if (first) _following = true;
+      });
+      if (_mapReady && !_followMe()) _fit(_tripPoints());
+    }).catchError((Object _) {
+      if (!mounted || request != _journeyRequest) return;
+    });
+  }
+
   void _recenter() {
+    if (_journey != null) {
+      setState(() => _following = true);
+      if (_followMe()) return;
+    }
     final me = _map.myLocation;
     final points = [..._tripPoints(), if (me != null) LatLng(me.lat, me.lng)];
-    _fit(points);
+    _fit(points.isNotEmpty ? points : _routePaths.values.expand((route) => route).toList());
   }
 
   void _selectRoute(String? corridorId) {
     _fleet.filterByCorridor(corridorId);
     setState(() => _selectedFeederId = null);
-    if (corridorId != null) _fit([for (final f in _fleet.feeders) LatLng(f.lat, f.lng)]);
+    if (corridorId != null) {
+      final points = _routePaths[corridorId];
+      if (points != null && points.isNotEmpty) _fit(points);
+    }
+  }
+
+  void _loadAvailableRoutes() {
+    for (final corridor in _fleet.corridors) {
+      if (!corridor.isDummy && !_routePaths.containsKey(corridor.id) &&
+          !_failedPaths.contains(corridor.id) && _loadingPaths.add(corridor.id)) {
+        _loadRoute(corridor.id);
+      }
+    }
+  }
+
+  Future<void> _loadRoute(String corridorId) async {
+    try {
+      final points = await widget.loadRoutePath(corridorId);
+      if (!mounted) return;
+      setState(() => _routePaths[corridorId] = points);
+      if (points.isNotEmpty && (_fleet.corridorFilter == corridorId ||
+          _map.trip?.corridorId == corridorId || (_map.trip == null && _routePaths.length == 1))) {
+        _fit(points);
+      }
+    } on Object {
+      _failedPaths.add(corridorId);
+    } finally {
+      _loadingPaths.remove(corridorId);
+    }
+  }
+
+  List<Polyline> _routeLines() {
+    final selected = _fleet.corridorFilter;
+    final booked = _map.trip?.corridorId;
+    final ids = _routePaths.keys.toList()
+      ..sort((a, b) => (a == booked ? 1 : a == selected ? 0 : -1)
+          .compareTo(b == booked ? 1 : b == selected ? 0 : -1));
+    return [
+      for (final id in ids)
+        if (_routePaths[id]!.length > 1)
+          Polyline(
+            points: _routePaths[id]!,
+            color: id == booked ? const Color(0xFF087F5B) : id == selected ? const Color(0xFF1769AA) : const Color(0x991769AA),
+            strokeWidth: id == booked ? 8 : id == selected ? 6 : 4,
+          ),
+      if (_journey != null && _journey!.current.points.length > 1)
+        Polyline(
+          points: _journey!.current.points.map((p) => LatLng(p.lat, p.lng)).toList(),
+          color: navRouteBlue,
+          borderColor: navRouteBorder,
+          borderStrokeWidth: 2,
+          strokeWidth: 7,
+        ),
+    ];
   }
 
   void _fit(List<LatLng> points) {
@@ -157,8 +301,12 @@ class _MapTabState extends State<MapTab> {
           children: [
             ServiceAreaMap(
               controller: _mapController,
+              routePolylines: _routeLines(),
               onMapReady: _onMapReady,
               onTap: () => setState(() => _selectedFeederId = null),
+              onUserGesture: _journey != null && _following
+                  ? () => setState(() => _following = false)
+                  : null,
               markers: passengerMapMarkers(
                 _map,
                 fleet: _fleet,
@@ -173,18 +321,32 @@ class _MapTabState extends State<MapTab> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  _RouteSearch(fleet: _fleet, onSelect: _selectRoute),
-                  if (_map.isReconnecting) ...[
-                    const SizedBox(height: AppSpacing.xs),
-                    const _Banner(text: LiveTrackingStrings.reconnecting),
-                  ] else if (_fleet.loadFailed) ...[
-                    const SizedBox(height: AppSpacing.xs),
-                    GestureDetector(
-                      onTap: _fleet.load,
-                      child: const _Banner(text: LiveTrackingStrings.fleetLoadFailed),
+                  // During a journey the instruction bar replaces the route
+                  // search, as in turn-by-turn navigation.
+                  if (_journey != null)
+                    _JourneyBanner(stage: _journey!.current, me: _map.myLocation)
+                  else
+                    _RouteSearch(fleet: _fleet, onSelect: _selectRoute),
+                  if (_fleet.corridorFilter != null)
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: ActionChip(
+                        avatar:
+                            const Icon(Icons.format_list_numbered, size: 18),
+                        label: const Text('Daftar halte rute'),
+                        onPressed: () =>
+                            Navigator.of(context).push(MaterialPageRoute<void>(
+                          builder: (_) => RouteStopsPage(
+                              corridorId: _fleet.corridorFilter!),
+                        )),
+                      ),
                     ),
+                  if (_fleet.selectedCorridor?.isDummy == true) ...[
+                    const SizedBox(height: AppSpacing.xs),
+                    const _Banner(text: 'Koridor ini belum memiliki koordinat jalan. Rute K1 tetap ditampilkan.'),
                   ],
-                  if (permission != null && permission != LocationPermissionState.granted)
+                  if (permission != null &&
+                      permission != LocationPermissionState.granted)
                     Align(
                       alignment: Alignment.centerLeft,
                       child: Padding(
@@ -192,7 +354,8 @@ class _MapTabState extends State<MapTab> {
                         child: ActionChip(
                           avatar: const Icon(Icons.my_location, size: 18),
                           label: Text(
-                            permission == LocationPermissionState.serviceDisabled
+                            permission ==
+                                    LocationPermissionState.serviceDisabled
                                 ? LiveTrackingStrings.turnOnGps
                                 : LiveTrackingStrings.showMyLocation,
                           ),
@@ -210,15 +373,25 @@ class _MapTabState extends State<MapTab> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
-                  FloatingActionButton.small(
-                    heroTag: null,
-                    tooltip: LiveTrackingStrings.recenter,
-                    onPressed: _recenter,
-                    child: const Icon(Icons.center_focus_strong),
-                  ),
+                  if (_journey != null && !_following)
+                    FloatingActionButton.extended(
+                      heroTag: null,
+                      onPressed: _recenter,
+                      icon: const Icon(Icons.navigation),
+                      label: const Text(LiveTrackingStrings.recenterOnMe),
+                    )
+                  else
+                    FloatingActionButton.small(
+                      heroTag: null,
+                      tooltip: LiveTrackingStrings.recenter,
+                      onPressed: _recenter,
+                      child: const Icon(Icons.center_focus_strong),
+                    ),
                   const SizedBox(height: AppSpacing.sm),
                   if (selected != null)
                     _FleetFeederCard(feeder: selected, fleet: _fleet)
+                  else if (_journey != null)
+                    _JourneyCard(journey: _journey!)
                   else
                     _TripCard(map: _map, onDuty: _fleet.onDutyCount),
                 ],
@@ -278,8 +451,12 @@ List<Marker> passengerMapMarkers(
             width: FleetFeederMarker.size,
             height: FleetFeederMarker.size,
             child: GestureDetector(
-              onTap: onTapFeeder == null ? null : () => onTapFeeder(feeder.feederId),
-              child: FleetFeederMarker(full: feeder.isFull, selected: feeder.feederId == selectedFeederId),
+              onTap: onTapFeeder == null
+                  ? null
+                  : () => onTapFeeder(feeder.feederId),
+              child: FleetFeederMarker(
+                  full: feeder.isFull,
+                  selected: feeder.feederId == selectedFeederId),
             ),
           ),
     if (booked != null)
@@ -333,7 +510,9 @@ class _RouteSearchState extends State<_RouteSearch> {
     final filtered = fleet.corridorFilter != null;
     // While editing, the text is a query; once a route is picked, show all
     // routes again on focus so switching is one tap.
-    final query = filtered && _text.text == fleet.selectedCorridor?.name ? '' : _text.text;
+    final query = filtered && _text.text == fleet.selectedCorridor?.name
+        ? ''
+        : _text.text;
     final results = fleet.searchRoutes(query);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -364,7 +543,8 @@ class _RouteSearchState extends State<_RouteSearch> {
               border: InputBorder.none,
               enabledBorder: InputBorder.none,
               focusedBorder: InputBorder.none,
-              contentPadding: const EdgeInsets.symmetric(vertical: AppSpacing.md),
+              contentPadding:
+                  const EdgeInsets.symmetric(vertical: AppSpacing.md),
             ),
           ),
         ),
@@ -386,19 +566,23 @@ class _RouteSearchState extends State<_RouteSearch> {
                       ListTile(
                         leading: const Icon(Icons.layers_outlined),
                         title: const Text(LiveTrackingStrings.allRoutes),
-                        subtitle: Text(LiveTrackingStrings.routeFeeders(fleet.onDutyCount)),
+                        subtitle: Text(LiveTrackingStrings.routeFeeders(
+                            fleet.onDutyCount)),
                         selected: !filtered,
                         onTap: () => _select(null),
                       ),
                     for (final corridor in results)
                       ListTile(
                         leading: const Icon(Icons.route_outlined),
-                        title: Text(corridor.name),
-                        subtitle: Text(LiveTrackingStrings.routeFeeders(fleet.onDutyOn(corridor.id))),
+                        title: Text(corridor.isDummy ? '${corridor.name} (dummy)' : corridor.name),
+                        subtitle: Text(LiveTrackingStrings.routeFeeders(
+                            fleet.onDutyOn(corridor.id))),
                         selected: corridor.id == fleet.corridorFilter,
                         onTap: () => _select(corridor.id),
                       ),
-                    if (results.isEmpty) const ListTile(title: Text(LiveTrackingStrings.noRouteFound)),
+                    if (results.isEmpty)
+                      const ListTile(
+                          title: Text(LiveTrackingStrings.noRouteFound)),
                   ],
                 ),
               ),
@@ -435,17 +619,21 @@ class _FleetFeederCard extends StatelessWidget {
               children: [
                 Expanded(
                   child: Text(
-                    LiveTrackingStrings.fleetFeederTitle(option?.number, feeder.feederId),
+                    LiveTrackingStrings.fleetFeederTitle(
+                        option?.number, feeder.feederId),
                     style: AppTextStyles.headlineMd,
                   ),
                 ),
                 if (feeder.isFull)
-                  Text(LiveTrackingStrings.full, style: AppTextStyles.labelMd.copyWith(color: AppColors.error)),
+                  Text(LiveTrackingStrings.full,
+                      style: AppTextStyles.labelMd
+                          .copyWith(color: AppColors.error)),
               ],
             ),
             if (corridor != null) ...[
               const SizedBox(height: AppSpacing.base),
-              Text(corridor.name, style: AppTextStyles.bodySm),
+              Text(corridor.isDummy ? '${corridor.name} (dummy)' : corridor.name,
+                  style: AppTextStyles.bodySm),
             ],
             const SizedBox(height: AppSpacing.base),
             Text(
@@ -455,12 +643,84 @@ class _FleetFeederCard extends StatelessWidget {
               style: AppTextStyles.bodySm,
             ),
             const SizedBox(height: AppSpacing.base),
-            const Text(LiveTrackingStrings.bookFromHome, style: AppTextStyles.bodySm),
+            const Text(LiveTrackingStrings.bookFromHome,
+                style: AppTextStyles.bodySm),
           ],
         ),
       ),
     );
   }
+}
+
+String _journeyDistance(double meters) =>
+    meters < 1000 ? '${meters.round()} m' : '${(meters / 1000).toStringAsFixed(1)} km';
+
+String _journeyAction(JourneyStage stage) => switch (stage.mode) {
+      'walk' => 'Jalan ke ${stage.destinationName}',
+      'motorcycle' => 'Naik motor ke ${stage.destinationName}',
+      'car' => 'Naik mobil ke ${stage.destinationName}',
+      _ => 'Naik feeder ke ${stage.destinationName}',
+    };
+
+class _JourneyBanner extends StatelessWidget {
+  const _JourneyBanner({required this.stage, required this.me});
+
+  final JourneyStage stage;
+  final UserLocation? me;
+
+  @override
+  Widget build(BuildContext context) {
+    final here = me == null ? null : LatLng(me!.lat, me!.lng);
+    // Only walking legs are the passenger's to navigate; on the feeder the
+    // bar just says where they are headed.
+    final step = stage.mode == 'walk' && here != null
+        ? upcomingStep(stage.steps, here)
+        : null;
+    return NavBanner(
+      step: step,
+      here: here,
+      arrivalName: stage.destinationName,
+      fallback: _journeyAction(stage),
+      fallbackIcon: stage.mode == 'walk' ? Icons.directions_walk : Icons.directions_bus,
+    );
+  }
+}
+
+class _JourneyCard extends StatelessWidget {
+  const _JourneyCard({required this.journey});
+
+  final Journey journey;
+
+  @override
+  Widget build(BuildContext context) => Material(
+        color: AppColors.surfaceContainerLowest,
+        elevation: 3,
+        borderRadius: BorderRadius.circular(AppRadius.lg),
+        child: Padding(
+          padding: const EdgeInsets.all(AppSpacing.md),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+            NavEtaRow(durationS: journey.current.durationS, distanceM: journey.current.distanceM),
+            Text(_journeyAction(journey.current), style: AppTextStyles.headlineMd),
+            const SizedBox(height: AppSpacing.sm),
+            const Text('Tahap perjalanan', style: AppTextStyles.bodySm),
+            const SizedBox(height: AppSpacing.xs),
+            for (final stage in journey.stages) Padding(
+              padding: const EdgeInsets.symmetric(vertical: 4),
+              child: Row(children: [
+                Icon(stage.status == 'completed' ? Icons.check_circle :
+                    stage.mode == 'walk' ? Icons.directions_walk : Icons.directions_bus,
+                    size: 20, color: stage.status == 'active' ? AppColors.primary : AppColors.onSurface),
+                const SizedBox(width: AppSpacing.xs),
+                Expanded(child: Text(_journeyAction(stage), style: AppTextStyles.bodySm.copyWith(
+                  fontWeight: stage.status == 'active' ? FontWeight.w700 : FontWeight.w400,
+                ))),
+                Text(stage.status == 'active' ? _journeyDistance(stage.distanceM) :
+                    stage.status == 'completed' ? 'Selesai' : 'Berikutnya', style: AppTextStyles.bodySm),
+              ]),
+            ),
+          ]),
+        ),
+      );
 }
 
 class _TripCard extends StatelessWidget {
@@ -478,10 +738,17 @@ class _TripCard extends StatelessWidget {
     final (title, lines, isWarning) = switch (map.status) {
       FeederTrackingStatus.none => (
           LiveTrackingStrings.noActiveTrip,
-          [LiveTrackingStrings.noActiveTripHint, if (onDuty > 0) LiveTrackingStrings.feedersOnDuty(onDuty)],
+          [
+            LiveTrackingStrings.noActiveTripHint,
+            if (onDuty > 0) LiveTrackingStrings.feedersOnDuty(onDuty)
+          ],
           false,
         ),
-      FeederTrackingStatus.searching => (LiveTrackingStrings.searchingFeeder, _pickupLine(trip), false),
+      FeederTrackingStatus.searching => (
+          LiveTrackingStrings.searchingFeeder,
+          _pickupLine(trip),
+          false
+        ),
       FeederTrackingStatus.waiting => (
           LiveTrackingStrings.feederTitle(trip!.feederId!),
           [LiveTrackingStrings.waitingFeederPosition, ..._pickupLine(trip)],
@@ -491,7 +758,8 @@ class _TripCard extends StatelessWidget {
           LiveTrackingStrings.feederTitle(trip!.feederId!),
           [
             if (trip.onBoard) LiveTrackingStrings.onBoard,
-            if (map.feederToPickupM != null) LiveTrackingStrings.toPickup(_distance(map.feederToPickupM!)),
+            if (map.feederToPickupM != null)
+              LiveTrackingStrings.toPickup(_distance(map.feederToPickupM!)),
             ..._pickupLine(trip),
             '${LiveTrackingStrings.occupancy(feeder!.occupancy)} · '
                 '${LiveTrackingStrings.updatedAt(_clock(feeder.updatedAt.toLocal()))}',
@@ -502,7 +770,9 @@ class _TripCard extends StatelessWidget {
           LiveTrackingStrings.feederTitle(trip!.feederId!),
           [
             LiveTrackingStrings.feederStale,
-            if (feeder != null) LiveTrackingStrings.feederStaleSince(_clock(feeder.updatedAt.toLocal())),
+            if (feeder != null)
+              LiveTrackingStrings.feederStaleSince(
+                  _clock(feeder.updatedAt.toLocal())),
           ],
           true,
         ),
@@ -522,7 +792,9 @@ class _TripCard extends StatelessWidget {
               const SizedBox(height: AppSpacing.base),
               Text(
                 line,
-                style: isWarning ? AppTextStyles.bodySm.copyWith(color: AppColors.error) : AppTextStyles.bodySm,
+                style: isWarning
+                    ? AppTextStyles.bodySm.copyWith(color: AppColors.error)
+                    : AppTextStyles.bodySm,
               ),
             ],
           ],
@@ -542,7 +814,9 @@ class _TripCard extends StatelessWidget {
     return '± ${(meters / 1000).toStringAsFixed(1).replaceAll('.', ',')} km';
   }
 
-  static String _clock(DateTime t) => [t.hour, t.minute, t.second].map((v) => v.toString().padLeft(2, '0')).join(':');
+  static String _clock(DateTime t) => [t.hour, t.minute, t.second]
+      .map((v) => v.toString().padLeft(2, '0'))
+      .join(':');
 }
 
 class _Banner extends StatelessWidget {
@@ -556,8 +830,11 @@ class _Banner extends StatelessWidget {
       color: AppColors.inverseSurface,
       borderRadius: BorderRadius.circular(AppRadius.md),
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md, vertical: AppSpacing.xs),
-        child: Text(text, style: AppTextStyles.bodySm.copyWith(color: AppColors.inverseOnSurface)),
+        padding: const EdgeInsets.symmetric(
+            horizontal: AppSpacing.md, vertical: AppSpacing.xs),
+        child: Text(text,
+            style: AppTextStyles.bodySm
+                .copyWith(color: AppColors.inverseOnSurface)),
       ),
     );
   }

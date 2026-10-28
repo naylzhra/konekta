@@ -4,10 +4,11 @@
 import math
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Optional, Protocol
+from typing import Literal, Optional, Protocol
 
 import httpx
-from pydantic import BaseModel
+import asyncpg
+from pydantic import BaseModel, Field
 
 from app.bookings import config
 from app.bookings.models import GeoPoint, Stop, StopType
@@ -25,13 +26,35 @@ def haversine_m(a: GeoPoint, b: GeoPoint) -> float:
 # --- StopAssigner -> pooling-service / stop-optimization-service -----------
 
 
+Direction = Literal["forward", "backward"]
+
+
 class StopAssignmentRequest(BaseModel):
     location: GeoPoint
     seats: int = 1
     corridor_id: Optional[str] = None
+    # Static stops are limited to this direction's route list when set.
+    direction: Optional[Direction] = None
+
+
+class RouteMatch(BaseModel):
+    """The corridor serving a trip and the direction it is travelled in."""
+    corridor_id: str
+    direction: Direction = "forward"
 
 
 class StopAssigner(Protocol):
+    async def match_corridor(self, origin: GeoPoint, destination: GeoPoint) -> Optional[RouteMatch]: ...
+
+    async def progress_m(
+        self, corridor_id: str, direction: Direction, points: list[GeoPoint]
+    ) -> list[Optional[float]]:
+        """Distance of each point along the corridor's line for [direction];
+        None where it can't be measured."""
+        ...
+
+    async def is_active(self, stop: Stop) -> bool: ...
+
     async def assign_pickup_stop(self, request: StopAssignmentRequest) -> Optional[Stop]: ...
 
     async def assign_dropoff_stop(self, request: StopAssignmentRequest) -> Optional[Stop]: ...
@@ -93,6 +116,112 @@ class StubStopAssigner:
     async def assign_dropoff_stop(self, request: StopAssignmentRequest) -> Optional[Stop]:
         return self._assign(request)
 
+    async def match_corridor(self, origin: GeoPoint, destination: GeoPoint) -> Optional[RouteMatch]:
+        if self._in_area(origin) and self._in_area(destination):
+            return RouteMatch(corridor_id="stub-corridor")
+        return None
+
+    async def progress_m(self, corridor_id, direction, points) -> list[Optional[float]]:
+        return [None for _ in points]
+
+    async def is_active(self, stop: Stop) -> bool:
+        return stop.valid_until is None or stop.valid_until > self._clock()
+
+
+class DbStopAssigner:
+    """Assign only stored, currently active stops; never invent a stop."""
+
+    def __init__(self, pool: asyncpg.Pool) -> None:
+        self._pool = pool
+
+    async def match_corridor(self, origin: GeoPoint, destination: GeoPoint) -> Optional[RouteMatch]:
+        """The closest corridor line, in either direction, along which the
+        destination lies at least 300 m after the origin."""
+        row = await self._pool.fetchrow(
+            """SELECT c.id, d.direction FROM corridors c
+               CROSS JOIN LATERAL (VALUES ('forward', c.path), ('backward', c.return_path))
+                    AS d(direction, line)
+               WHERE d.line IS NOT NULL AND NOT c.is_dummy
+                 AND ST_DWithin(d.line,
+                       ST_SetSRID(ST_MakePoint($1, $2),4326)::geography, c.catchment_m)
+                 AND ST_DWithin(d.line,
+                       ST_SetSRID(ST_MakePoint($3, $4),4326)::geography, c.catchment_m)
+                 AND (ST_LineLocatePoint(d.line::geometry,
+                       ST_SetSRID(ST_MakePoint($3, $4),4326))
+                    - ST_LineLocatePoint(d.line::geometry,
+                       ST_SetSRID(ST_MakePoint($1, $2),4326))) * ST_Length(d.line) >= 300
+               ORDER BY ST_Distance(d.line,
+                        ST_SetSRID(ST_MakePoint($1, $2),4326)::geography)
+                      + ST_Distance(d.line,
+                        ST_SetSRID(ST_MakePoint($3, $4),4326)::geography)
+               LIMIT 1""",
+            origin.lng, origin.lat, destination.lng, destination.lat,
+        )
+        return RouteMatch(corridor_id=row["id"], direction=row["direction"]) if row else None
+
+    async def progress_m(self, corridor_id, direction, points) -> list[Optional[float]]:
+        if not points:
+            return []
+        rows = await self._pool.fetch(
+            """SELECT p.ord, ST_LineLocatePoint(line::geometry,
+                          ST_SetSRID(ST_MakePoint(p.lng, p.lat), 4326)) * ST_Length(line) AS along_m
+               FROM (SELECT CASE WHEN $2 = 'backward' THEN return_path ELSE path END AS line
+                     FROM corridors WHERE id = $1) c,
+                    unnest($3::float8[], $4::float8[]) WITH ORDINALITY AS p(lat, lng, ord)
+               WHERE c.line IS NOT NULL""",
+            corridor_id, direction, [p.lat for p in points], [p.lng for p in points],
+        )
+        along = {row["ord"]: row["along_m"] for row in rows}
+        return [along.get(i + 1) for i in range(len(points))]
+
+    async def is_active(self, stop: Stop) -> bool:
+        return bool(await self._pool.fetchval(
+            """SELECT 1 FROM stops s
+               WHERE s.id = $1 AND s.retired_at IS NULL
+                 AND (s.valid_until IS NULL OR s.valid_until > now())
+                 AND (s.type = 'static' OR EXISTS (
+                      SELECT 1 FROM stop_candidates c
+                      WHERE c.approved_stop_id = s.id AND c.status = 'approved'))""",
+            stop.id,
+        ))
+
+    async def _assign(self, request: StopAssignmentRequest) -> Optional[Stop]:
+        row = await self._pool.fetchrow(
+            """SELECT s.id, s.type::text AS type, s.name, s.corridor_id, s.valid_until,
+                      ST_Y(s.location::geometry) AS lat, ST_X(s.location::geometry) AS lng
+               FROM stops s JOIN corridors c ON c.id = s.corridor_id
+               WHERE s.retired_at IS NULL
+                 AND (s.valid_until IS NULL OR s.valid_until > now())
+                 AND (s.type = 'static' OR EXISTS (
+                      SELECT 1 FROM stop_candidates candidate
+                      WHERE candidate.approved_stop_id = s.id AND candidate.status = 'approved'))
+                 AND c.path IS NOT NULL AND NOT c.is_dummy
+                 AND ($3::text IS NULL OR s.corridor_id = $3)
+                 AND ($5::text IS NULL OR s.type <> 'static' OR EXISTS (
+                      SELECT 1 FROM corridor_route_stops r
+                      WHERE r.stop_id = s.id AND r.direction = $5))
+                 AND ST_DWithin(s.location,
+                      ST_SetSRID(ST_MakePoint($1, $2),4326)::geography, $4)
+               ORDER BY ST_Distance(s.location,
+                      ST_SetSRID(ST_MakePoint($1, $2),4326)::geography), s.id
+               LIMIT 1""",
+            request.location.lng, request.location.lat, request.corridor_id,
+            config.MAX_WALK_TO_STOP_M, request.direction,
+        )
+        if row is None:
+            return None
+        return Stop(
+            id=row["id"], type=StopType(row["type"]), name=row["name"],
+            location=GeoPoint(lat=row["lat"], lng=row["lng"]),
+            corridor_id=row["corridor_id"], valid_until=row["valid_until"],
+        )
+
+    async def assign_pickup_stop(self, request: StopAssignmentRequest) -> Optional[Stop]:
+        return await self._assign(request)
+
+    async def assign_dropoff_stop(self, request: StopAssignmentRequest) -> Optional[Stop]:
+        return await self._assign(request)
+
 
 # --- FeederPositionProvider (owned by live tracking, DESIGN.md §5.2) --------
 
@@ -105,6 +234,8 @@ class FeederPosition(BaseModel):
     occupancy: int = 0
     capacity: int
     corridor_id: Optional[str] = None
+    # Chosen by the driver when going on duty; None from older clients.
+    direction: Optional[Direction] = None
     updated_at: datetime
 
     @property
@@ -166,9 +297,21 @@ class StubFeederPositionProvider:
 # --- RoutingClient -> OSRM-compatible (DESIGN.md §5.7) ----------------------
 
 
+class RouteStep(BaseModel):
+    """One OSRM maneuver; the client words it (e.g. "Belok kiri ke Jalan Aceh")."""
+    type: str
+    modifier: Optional[str] = None
+    name: str = ""
+    distance_m: float
+    duration_s: float
+    location: GeoPoint
+
+
 class RouteResult(BaseModel):
     distance_m: float
     duration_s: float
+    points: list[GeoPoint] = Field(default_factory=list)
+    steps: list[RouteStep] = Field(default_factory=list)
 
 
 class RoutingError(Exception):
@@ -188,17 +331,33 @@ class OsrmRoutingClient:
         base_url: str = config.OSRM_BASE_URL,
         timeout_s: float = config.ROUTING_TIMEOUT_S,
         transport: Optional[httpx.AsyncBaseTransport] = None,
+        foot_base_url: str = config.OSRM_FOOT_BASE_URL,
+        motorcycle_base_url: str = config.OSRM_MOTORCYCLE_BASE_URL,
     ) -> None:
         self._base_url = base_url.rstrip("/")
+        self._foot_base_url = foot_base_url.rstrip("/")
+        self._motorcycle_base_url = motorcycle_base_url.rstrip("/")
         self._timeout_s = timeout_s
         self._transport = transport
 
-    async def route(self, points: list[GeoPoint], profile: str = "driving") -> RouteResult:
+    async def route(
+        self, points: list[GeoPoint], profile: str = "driving", *, geometry: bool = False, steps: bool = False,
+    ) -> RouteResult:
+        if profile not in {"driving", "walking", "motorcycle"}:
+            raise RoutingError(f"unsupported route profile: {profile}")
+        base_url = {
+            "driving": self._base_url,
+            "walking": self._foot_base_url,
+            "motorcycle": self._motorcycle_base_url,
+        }[profile]
         coordinates = ";".join(f"{p.lng},{p.lat}" for p in points)
-        url = f"{self._base_url}/route/v1/{profile}/{coordinates}"
+        url = f"{base_url}/route/v1/{profile}/{coordinates}"
         try:
             async with httpx.AsyncClient(timeout=self._timeout_s, transport=self._transport) as client:
-                response = await client.get(url, params={"overview": "false"})
+                response = await client.get(url, params={
+                    "overview": "full" if geometry else "false", "geometries": "geojson",
+                    "steps": "true" if steps else "false",
+                })
             response.raise_for_status()
             body = response.json()
         except (httpx.HTTPError, ValueError) as exc:
@@ -206,12 +365,27 @@ class OsrmRoutingClient:
         if body.get("code") != "Ok" or not body.get("routes"):
             raise RoutingError("no route")
         best = body["routes"][0]
-        return RouteResult(distance_m=float(best["distance"]), duration_s=float(best["duration"]))
+        coordinates = best.get("geometry", {}).get("coordinates", []) if geometry else []
+        return RouteResult(
+            distance_m=float(best["distance"]), duration_s=float(best["duration"]),
+            points=[GeoPoint(lat=lat, lng=lng) for lng, lat in coordinates],
+            steps=[
+                RouteStep(
+                    type=step["maneuver"]["type"], modifier=step["maneuver"].get("modifier"),
+                    name=step.get("name") or "", distance_m=float(step["distance"]),
+                    duration_s=float(step["duration"]),
+                    location=GeoPoint(lat=step["maneuver"]["location"][1], lng=step["maneuver"]["location"][0]),
+                )
+                for leg in best.get("legs", []) for step in leg.get("steps", [])
+            ] if steps else [],
+        )
 
 
-def build_stop_assigner() -> StopAssigner:
+def build_stop_assigner(pool: Optional[asyncpg.Pool] = None) -> StopAssigner:
     if config.STOP_ASSIGNER == "stub":
         return StubStopAssigner()
+    if config.STOP_ASSIGNER == "db" and pool is not None:
+        return DbStopAssigner(pool)
     raise ValueError(f"Unknown STOP_ASSIGNER={config.STOP_ASSIGNER!r}")
 
 

@@ -186,6 +186,7 @@ class BookingErrorNotice extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (error.code.isTransient) return const SizedBox.shrink();
     return BookingNotice(
       message: BookingStrings.failure(error.code),
       isError: true,

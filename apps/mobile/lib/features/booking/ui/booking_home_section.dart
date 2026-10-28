@@ -1,9 +1,13 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_map/flutter_map.dart';
+import 'package:latlong2/latlong.dart';
 
 import '../../../core/strings/booking_strings.dart';
 import '../../../core/theme/konekta_theme.dart';
+import '../../live_tracking/domain/service_area.dart';
+import '../../live_tracking/ui/service_area_map.dart';
 import '../data/trip_locations.dart';
 import '../domain/booking_failure.dart';
 import '../domain/booking_models.dart';
@@ -12,8 +16,8 @@ import 'active_booking_card.dart';
 import 'booking_widgets.dart';
 import 'home_widgets.dart';
 
-/// Home tab content: greeting, search, map preview, quick actions and pooling
-/// summary. Booking itself (consent -> destination -> plan -> confirm) lives in
+/// Home tab content: greeting, search, map preview, and quick actions.
+/// Booking itself (consent -> destination -> plan -> confirm) lives in
 /// [_TripPlannerPage]; once a booking exists, its live status replaces the
 /// search and quick actions here (DESIGN.md §1).
 class BookingHomeSection extends StatelessWidget {
@@ -69,10 +73,6 @@ class BookingHomeSection extends StatelessWidget {
             const SizedBox(height: AppSpacing.base),
             const Text(BookingStrings.homeSubtitle, style: AppTextStyles.bodyMd),
             const SizedBox(height: AppSpacing.lg),
-            if (!controller.isOnline) ...[
-              const BookingNotice(icon: Icons.cloud_off, message: BookingStrings.offline),
-              const SizedBox(height: AppSpacing.sm),
-            ],
             if (!hasBooking) ...[
               HomeSearchBar(onTap: () => _openPlanner(context)),
               const SizedBox(height: AppSpacing.md),
@@ -107,8 +107,6 @@ class BookingHomeSection extends StatelessWidget {
                   ],
                 ),
               ),
-            const SizedBox(height: AppSpacing.md),
-            HomePoolingCard(activeVirtualStops: HomeStats.activeVirtualStops),
           ],
         );
       },
@@ -170,10 +168,6 @@ class _TripPlannerPageState extends State<_TripPlannerPage> {
                 return ListView(
                   padding: const EdgeInsets.all(AppSpacing.containerMargin),
                   children: [
-                    if (!controller.isOnline) ...[
-                      const BookingNotice(icon: Icons.cloud_off, message: BookingStrings.offline),
-                      const SizedBox(height: AppSpacing.sm),
-                    ],
                     _ConsentCard(controller: controller),
                   ],
                 );
@@ -251,9 +245,14 @@ class _TripPlanner extends StatefulWidget {
 }
 
 class _TripPlannerState extends State<_TripPlanner> {
+  final _plannerMapController = MapController();
+  bool _plannerMapReady = false;
   final _query = TextEditingController();
   GeoPoint? _origin;
   bool _loadingOrigin = true;
+  bool _originIsGps = true;
+  bool _choosingOrigin = false;
+  String? _locationMessage;
 
   /// The searched place. It is the destination, or the origin when [_swapped]
   /// (then the trip ends at the current location).
@@ -272,22 +271,40 @@ class _TripPlannerState extends State<_TripPlanner> {
   @override
   void dispose() {
     _query.dispose();
+    _plannerMapController.dispose();
     super.dispose();
   }
 
   Future<void> _loadOrigin() async {
     setState(() => _loadingOrigin = true);
-    final origin = await widget.locations.currentOrigin();
+    GeoPoint? origin;
+    try {
+      origin = await widget.locations.currentOrigin();
+    } on Object {
+      origin = null;
+    }
     if (!mounted) return;
     setState(() {
       _origin = origin;
+      _originIsGps = true;
       _loadingOrigin = false;
+      _locationMessage = origin != null && !ServiceArea.contains(origin.lat, origin.lng)
+          ? 'Lokasimu di luar area layanan Bandung. Pilih titik asal di peta.'
+          : null;
     });
+    if (_plannerMapReady && origin != null && ServiceArea.contains(origin.lat, origin.lng)) {
+      _plannerMapController.move(LatLng(origin.lat, origin.lng), 15);
+    }
   }
 
   Future<void> _search(String query) async {
     final request = ++_searchRequest;
-    final results = await widget.locations.searchDestinations(query);
+    List<TripPlace> results;
+    try {
+      results = await widget.locations.searchDestinations(query);
+    } on Object {
+      results = const [];
+    }
     if (!mounted || request != _searchRequest) return;
     setState(() => _suggestions = results);
   }
@@ -304,8 +321,44 @@ class _TripPlannerState extends State<_TripPlanner> {
   void _select(TripPlace place) {
     FocusScope.of(context).unfocus();
     widget.controller.clearPlans();
-    _query.text = place.name;
-    setState(() => _place = place);
+    if (_choosingOrigin) {
+      setState(() {
+        _origin = place.location;
+        _originIsGps = false;
+        _choosingOrigin = false;
+        _locationMessage = null;
+      });
+      _query.clear();
+      _search('');
+      if (_plannerMapReady) _plannerMapController.move(LatLng(place.location.lat, place.location.lng), 15);
+    } else {
+      _query.text = place.name;
+      setState(() => _place = place);
+    }
+  }
+
+  void _selectOnMap(LatLng point) {
+    widget.controller.clearPlans();
+    final selected = GeoPoint(lat: point.latitude, lng: point.longitude);
+    if (!ServiceArea.contains(selected.lat, selected.lng)) {
+      setState(() => _locationMessage = 'Titik berada di luar area layanan Bandung.');
+      return;
+    }
+    setState(() {
+      _locationMessage = null;
+      if (_choosingOrigin) {
+        _origin = selected;
+        _originIsGps = false;
+        _choosingOrigin = false;
+      } else {
+        _place = TripPlace(id: 'map', name: 'Titik pada peta', location: selected);
+        _query.text = _place!.name;
+      }
+    });
+    if (_choosingOrigin == false && _place == null) {
+      _query.clear();
+      _search('');
+    }
   }
 
   void _swap() {
@@ -317,6 +370,11 @@ class _TripPlannerState extends State<_TripPlanner> {
     final here = _origin;
     final place = _place;
     if (here == null || place == null) return;
+    if (!ServiceArea.contains(here.lat, here.lng) ||
+        !ServiceArea.contains(place.location.lat, place.location.lng)) {
+      setState(() => _locationMessage = 'Asal dan tujuan harus berada di area layanan Bandung.');
+      return;
+    }
     widget.controller.clearActionError();
     unawaited(
       widget.controller.planTrip(
@@ -336,7 +394,13 @@ class _TripPlannerState extends State<_TripPlanner> {
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Text(BookingStrings.suggestedPlaces, style: _sheetTitleStyle),
+        Text(_choosingOrigin ? (_swapped ? 'Pilih titik tujuan' : 'Pilih titik asal') : BookingStrings.suggestedPlaces,
+          style: _sheetTitleStyle),
+        if (_locationMessage != null) ...[
+          const SizedBox(height: AppSpacing.xs),
+          Text(_locationMessage!, style: AppTextStyles.bodySm.copyWith(color: AppColors.error)),
+        ],
+        const Text('Ketuk peta untuk memilih titik, atau pilih halte di bawah.', style: AppTextStyles.bodySm),
         const SizedBox(height: AppSpacing.xs),
         Flexible(
           child: _suggestions.isEmpty
@@ -376,9 +440,17 @@ class _TripPlannerState extends State<_TripPlanner> {
   @override
   Widget build(BuildContext context) {
     final controller = widget.controller;
-    final canPlan = _origin != null && _place != null && controller.planning != PlanningStatus.loading;
+    final canPlan = _origin != null && _place != null &&
+        ServiceArea.contains(_origin!.lat, _origin!.lng) &&
+        ServiceArea.contains(_place!.location.lat, _place!.location.lng) &&
+        controller.planning != PlanningStatus.loading;
 
-    final currentLocation = _OriginRow(loading: _loadingOrigin, available: _origin != null, onRetry: _loadOrigin);
+    final currentLocation = _OriginRow(
+      loading: _loadingOrigin,
+      available: _origin != null,
+      label: _originIsGps ? BookingStrings.currentLocation : (_swapped ? 'Titik tujuan dipilih' : 'Titik asal dipilih'),
+      onRetry: _loadOrigin,
+    );
     final placeField = TextField(
       controller: _query,
       onChanged: _onQueryChanged,
@@ -408,18 +480,16 @@ class _TripPlannerState extends State<_TripPlanner> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              // Always one child, so toggling connectivity doesn't shift the
-              // endpoints card and reset the text field.
-              controller.isOnline
-                  ? const SizedBox.shrink()
-                  : const Padding(
-                      padding: EdgeInsets.only(bottom: AppSpacing.sm),
-                      child: BookingNotice(icon: Icons.cloud_off, message: BookingStrings.offline),
-                    ),
               _EndpointsCard(
                 origin: _swapped ? placeField : currentLocation,
                 destination: _swapped ? currentLocation : placeField,
                 onSwap: _swap,
+              ),
+              TextButton.icon(
+                onPressed: () => setState(() => _choosingOrigin = !_choosingOrigin),
+                icon: const Icon(Icons.place_outlined),
+                label: Text(_choosingOrigin ? 'Batal memilih titik' :
+                    (_swapped ? 'Pilih titik tujuan di peta' : 'Pilih titik asal di peta')),
               ),
             ],
           ),
@@ -443,8 +513,24 @@ class _TripPlannerState extends State<_TripPlanner> {
     return LayoutBuilder(
       builder: (context, constraints) => Stack(
         children: [
-          const Positioned.fill(child: StylizedMap()),
-          if (_place != null) const Align(alignment: Alignment(0, -0.6), child: _PlaceMarker()),
+          Positioned.fill(
+            child: ServiceAreaMap(
+              controller: _plannerMapController,
+              onMapReady: () => _plannerMapReady = true,
+              initialCenter: _origin != null && ServiceArea.contains(_origin!.lat, _origin!.lng)
+                  ? LatLng(_origin!.lat, _origin!.lng)
+                  : ServiceArea.center,
+              onMapTap: _selectOnMap,
+              markers: [
+                if (_origin != null && ServiceArea.contains(_origin!.lat, _origin!.lng))
+                  Marker(point: LatLng(_origin!.lat, _origin!.lng), width: 40, height: 40,
+                    child: const Icon(Icons.trip_origin, color: AppColors.primary, size: 32)),
+                if (_place != null)
+                  Marker(point: LatLng(_place!.location.lat, _place!.location.lng), width: 44, height: 44,
+                    child: const Icon(Icons.location_on, color: AppColors.secondary, size: 40)),
+              ],
+            ),
+          ),
           Align(
             alignment: Alignment.bottomCenter,
             child: Column(
@@ -579,10 +665,11 @@ class _EndpointRow extends StatelessWidget {
 }
 
 class _OriginRow extends StatelessWidget {
-  const _OriginRow({required this.loading, required this.available, required this.onRetry});
+  const _OriginRow({required this.loading, required this.available, required this.label, required this.onRetry});
 
   final bool loading;
   final bool available;
+  final String label;
   final VoidCallback onRetry;
 
   @override
@@ -601,17 +688,7 @@ class _OriginRow extends StatelessWidget {
         ],
       );
     }
-    return Text(BookingStrings.currentLocation, style: _EndpointRow.valueStyle);
-  }
-}
-
-/// Pin for the picked place.
-class _PlaceMarker extends StatelessWidget {
-  const _PlaceMarker();
-
-  @override
-  Widget build(BuildContext context) {
-    return const Icon(Icons.location_on_outlined, size: 44, color: AppColors.secondary);
+    return Text(label, style: _EndpointRow.valueStyle);
   }
 }
 
@@ -1031,14 +1108,18 @@ class _LegSummary extends StatelessWidget {
               ],
             ),
           ),
-        LegMode.feeder => Container(
+        LegMode.feeder || LegMode.motorcycle || LegMode.car => Container(
             padding: const EdgeInsets.symmetric(horizontal: AppSpacing.xs, vertical: 2),
             decoration: BoxDecoration(
               color: AppColors.primaryContainer,
               borderRadius: BorderRadius.circular(AppRadius.sm),
             ),
             child: Text(
-              BookingStrings.feederLine(plan.corridorId),
+              switch (leg.mode) {
+                LegMode.motorcycle => 'Motor',
+                LegMode.car => 'Mobil',
+                _ => BookingStrings.feederLine(plan.corridorId),
+              },
               style: AppTextStyles.labelMd.copyWith(color: AppColors.onPrimary, letterSpacing: 0),
             ),
           ),
@@ -1083,6 +1164,8 @@ class _RouteTimeline extends StatelessWidget {
         case LegMode.walk:
           steps.add(_TimelineStep.segment(_Rail.walk, BookingStrings.walkLeg(duration, distance)));
         case LegMode.feeder:
+        case LegMode.motorcycle:
+        case LegMode.car:
           final pickup = plan.pickupStop;
           final dropoff = plan.dropoffStop;
           steps
@@ -1092,7 +1175,11 @@ class _RouteTimeline extends StatelessWidget {
               time: at,
               stop: pickup,
             ))
-            ..add(_TimelineStep.segment(_Rail.ride, BookingStrings.rideLeg(duration, distance)));
+            ..add(_TimelineStep.segment(_Rail.ride, switch (leg.mode) {
+              LegMode.motorcycle => 'Naik motor $duration ($distance)',
+              LegMode.car => 'Naik mobil $duration ($distance)',
+              _ => BookingStrings.rideLeg(duration, distance),
+            }));
           at = at.add(Duration(seconds: leg.durationS.round()));
           steps.add(_TimelineStep.node(
             _NodeKind.dropoff,

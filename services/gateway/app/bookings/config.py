@@ -21,6 +21,8 @@ SIM_DWELL_S = _int_env("SIM_DWELL_S", 45)
 SIM_RIDE_S = _int_env("SIM_RIDE_S", 20)
 
 OSRM_BASE_URL = os.getenv("OSRM_BASE_URL", "http://localhost:5001")
+OSRM_FOOT_BASE_URL = os.getenv("OSRM_FOOT_BASE_URL", OSRM_BASE_URL)
+OSRM_MOTORCYCLE_BASE_URL = os.getenv("OSRM_MOTORCYCLE_BASE_URL", OSRM_BASE_URL)
 ROUTING_TIMEOUT_S = 5.0
 
 # --- product decisions -----------------------------------------------------
@@ -38,7 +40,9 @@ MATCHING_TIMEOUT_S = _int_env("MATCHING_TIMEOUT_S", 120)
 CONFIRMED_TIMEOUT_S = _int_env("CONFIRMED_TIMEOUT_S", 1800)
 SWEEP_INTERVAL_S = _int_env("SWEEP_INTERVAL_S", 15)
 ARRIVING_RADIUS_M = 300
-FEEDER_SEARCH_RADIUS_M = 3000
+FEEDER_SEARCH_RADIUS_M = 10000
+# A feeder this far past the pickup along the route still counts as arriving.
+FEEDER_PASSED_TOLERANCE_M = 50
 MAX_WALK_TO_STOP_M = 800
 VIRTUAL_STOP_TTL_S = 900
 WALK_SPEED_MPS = 1.25

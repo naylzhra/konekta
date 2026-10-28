@@ -1,11 +1,15 @@
 import 'package:flutter/material.dart';
+import 'package:latlong2/latlong.dart';
 
 import '../../core/location/user_location_provider.dart';
+import '../../core/strings/account_strings.dart';
 import '../../shared_widgets/konekta_navbar.dart';
 import '../../shared_widgets/konekta_tab_scaffold.dart';
 import '../booking/ui/booking_scope.dart';
+import '../booking/data/journey_api.dart';
 import '../live_tracking/data/feeder_api.dart';
 import '../live_tracking/data/feeder_position_stream.dart';
+import '../live_tracking/domain/feeder_models.dart';
 import '../live_tracking/state/feeder_fleet_controller.dart';
 import '../live_tracking/state/passenger_map_controller.dart';
 import 'booking_active_trip.dart';
@@ -24,6 +28,18 @@ class PassengerMain extends StatelessWidget {
     return BookingScope(token: token, child: const _PassengerTabs());
   }
 }
+
+/// Both directions of a corridor as one line: the forward route ends where
+/// the return route starts (and vice versa), so they join into a loop.
+Future<List<LatLng>> Function(String) _bothDirections(FeederApi api) =>
+    (corridorId) async {
+      final forward = await api.routePath(corridorId);
+      try {
+        return [...forward, ...await api.routePath(corridorId, direction: RouteDirection.backward)];
+      } on FeederApiException {
+        return forward;
+      }
+    };
 
 class _PassengerTabs extends StatefulWidget {
   const _PassengerTabs();
@@ -45,7 +61,8 @@ class _PassengerTabsState extends State<_PassengerTabs> {
     final scope = BookingScope.of(context);
     final wsClient = scope.session.wsClient;
     final feederPositions = _feederPositions = WsFeederPositionStream(wsClient);
-    final activeTrip = _activeTrip = BookingActiveTrip(scope.dependencies.booking);
+    final activeTrip =
+        _activeTrip = BookingActiveTrip(scope.dependencies.booking);
     _map = PassengerMapController(
       trip: activeTrip,
       positions: feederPositions,
@@ -76,19 +93,34 @@ class _PassengerTabsState extends State<_PassengerTabs> {
   Widget build(BuildContext context) {
     return KonektaTabScaffold(
       items: const [
-        KonektaNavItem(icon: Icons.home_outlined, selectedIcon: Icons.home, label: 'Home'),
+        KonektaNavItem(
+            icon: Icons.home_outlined,
+            selectedIcon: Icons.home,
+            label: 'Beranda'),
         KonektaNavItem(
           icon: Icons.directions_bus_outlined,
           selectedIcon: Icons.directions_bus,
-          label: 'Trips',
+          label: 'Perjalanan',
         ),
-        KonektaNavItem(icon: Icons.map_outlined, selectedIcon: Icons.map, label: 'Map'),
-        KonektaNavItem(icon: Icons.person_outline, selectedIcon: Icons.person, label: 'Profile'),
+        KonektaNavItem(
+            icon: Icons.map_outlined, selectedIcon: Icons.map, label: 'Peta'),
+        KonektaNavItem(
+            icon: Icons.person_outline,
+            selectedIcon: Icons.person,
+            label: AccountStrings.profile),
       ],
       tabs: [
         HomeTab(map: _map!, fleet: _fleet!),
         const TripsTab(),
-        MapTab(controller: _map!, fleet: _fleet!),
+        MapTab(
+          controller: _map!,
+          fleet: _fleet!,
+          booking: BookingScope.of(context).dependencies.booking,
+          loadJourney: JourneyApi(BookingScope.of(context).session.apiClient,
+                  BookingScope.of(context).session.token)
+              .load,
+          loadRoutePath: _bothDirections(FeederApi(BookingScope.of(context).session.apiClient)),
+        ),
         const ProfileTab(),
       ],
     );

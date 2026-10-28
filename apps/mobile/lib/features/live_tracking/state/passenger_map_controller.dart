@@ -9,9 +9,10 @@ import '../data/feeder_position_stream.dart';
 import '../domain/feeder_models.dart';
 
 class ActiveTrip {
-  const ActiveTrip({this.feederId, this.pickup, this.pickupName, this.onBoard = false});
+  const ActiveTrip({this.feederId, this.corridorId, this.pickup, this.pickupName, this.onBoard = false});
 
   final String? feederId;
+  final String? corridorId;
   final LatLng? pickup;
   final String? pickupName;
   final bool onBoard;
@@ -20,12 +21,13 @@ class ActiveTrip {
   bool operator ==(Object other) =>
       other is ActiveTrip &&
       other.feederId == feederId &&
+      other.corridorId == corridorId &&
       other.pickup == pickup &&
       other.pickupName == pickupName &&
       other.onBoard == onBoard;
 
   @override
-  int get hashCode => Object.hash(feederId, pickup, pickupName, onBoard);
+  int get hashCode => Object.hash(feederId, corridorId, pickup, pickupName, onBoard);
 }
 
 enum FeederTrackingStatus {

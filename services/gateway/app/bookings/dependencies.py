@@ -15,6 +15,7 @@ from app.bookings.repository import BookingRepository
 from app.bookings.service import BookingService
 from app.bookings.simulator import BookingSimulator
 from app.db import get_pool
+from app.feeders.dependencies import get_position_provider
 from app.websocket.manager import manager
 
 logger = logging.getLogger(__name__)
@@ -27,10 +28,11 @@ _sweeper: Optional[asyncio.Task] = None
 async def get_booking_service() -> BookingService:
     global _service, _simulator
     if _service is None:
+        pool = await get_pool()
         _service = BookingService(
-            BookingRepository(await get_pool()),
-            build_stop_assigner(),
-            build_feeder_provider(),
+            BookingRepository(pool),
+            build_stop_assigner(pool),
+            get_position_provider() if config.FEEDER_PROVIDER == "redis" else build_feeder_provider(),
             OsrmRoutingClient(),
             HubBookingEventPublisher(manager),
         )

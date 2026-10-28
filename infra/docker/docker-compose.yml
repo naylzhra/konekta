@@ -46,9 +46,18 @@ services:
       DATABASE_URL: postgresql://konekta:konekta@postgres:5432/konekta
       REDIS_URL: redis://redis:6379/0
       OSRM_BASE_URL: http://osrm-mock:8000
-      # Booking stubs until real implementations exist (DESIGN.md §5).
-      STOP_ASSIGNER: stub
-      FEEDER_PROVIDER: stub
+      POOLING_URL: http://pooling-service:8000
+      STOP_OPTIMIZATION_URL: http://stop-optimization-service:8000
+      ROUTING_DATA_READY: "0"
+      STOP_ASSIGNER: db
+      FEEDER_PROVIDER: redis
+      VIRTUAL_STOP_AUTO_RUN: ${VIRTUAL_STOP_AUTO_RUN:-1}
+      VIRTUAL_STOP_SCAN_INTERVAL_S: ${VIRTUAL_STOP_SCAN_INTERVAL_S:-60}
+      VIRTUAL_STOP_WINDOW_DAYS: ${VIRTUAL_STOP_WINDOW_DAYS:-7}
+      VIRTUAL_STOP_REQUEST_THRESHOLD: ${VIRTUAL_STOP_REQUEST_THRESHOLD:-10}
+      VIRTUAL_STOP_CLUSTER_RADIUS_M: ${VIRTUAL_STOP_CLUSTER_RADIUS_M:-150}
+      VIRTUAL_STOP_STOP_SPACING_M: ${VIRTUAL_STOP_STOP_SPACING_M:-300}
+      VIRTUAL_STOP_SLOT_MINUTES: ${VIRTUAL_STOP_SLOT_MINUTES:-1440}
       STUB_FEEDER_SUPPLY: ${STUB_FEEDER_SUPPLY:-1}
       # Demo-only driver simulator; set BOOKING_SIMULATOR=1 in your shell/.env to enable.
       BOOKING_SIMULATOR: ${BOOKING_SIMULATOR:-0}

@@ -80,7 +80,9 @@ class StopSnapshot {
 
 enum LegMode {
   walk('walk'),
-  feeder('feeder');
+  feeder('feeder'),
+  motorcycle('motorcycle'),
+  car('car');
 
   const LegMode(this.wire);
 
@@ -160,6 +162,7 @@ class Booking {
     required this.createdAt,
     required this.updatedAt,
     this.tripPlanId,
+    this.corridorId,
     this.pickupStop,
     this.dropoffStop,
     this.feederId,
@@ -172,6 +175,7 @@ class Booking {
         id: json['id'] as String,
         status: BookingStatus.fromWire(json['status'] as String),
         tripPlanId: json['trip_plan_id'] as String?,
+        corridorId: json['corridor_id'] as String?,
         seats: json['seats'] as int,
         pickupStop: _parseOptional(json['pickup_stop'], StopSnapshot.fromJson),
         dropoffStop: _parseOptional(json['dropoff_stop'], StopSnapshot.fromJson),
@@ -188,6 +192,7 @@ class Booking {
   final String id;
   final BookingStatus status;
   final String? tripPlanId;
+  final String? corridorId;
   final int seats;
   final StopSnapshot? pickupStop;
   final StopSnapshot? dropoffStop;

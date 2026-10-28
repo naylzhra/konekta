@@ -1,0 +1,53 @@
+# Use after preparing infra/osrm/data/bandung.osrm* with infra/osrm/prepare.ps1.
+services:
+  osrm:
+    image: ghcr.io/project-osrm/osrm-backend:latest
+    command: ["osrm-routed", "--algorithm", "mld", "/data/bandung.osrm"]
+    volumes:
+      - ../osrm/data:/data:ro
+    ports:
+      - "5002:5000"
+
+  osrm-foot:
+    image: ghcr.io/project-osrm/osrm-backend:latest
+    command: ["osrm-routed", "--algorithm", "mld", "/data/bandung-foot.osrm"]
+    volumes:
+      - ../osrm/data:/data:ro
+    ports:
+      - "5003:5000"
+
+  osrm-motorcycle:
+    image: ghcr.io/project-osrm/osrm-backend:latest
+    command: ["osrm-routed", "--algorithm", "mld", "/data/bandung-motorcycle.osrm"]
+    volumes:
+      - ../osrm/data:/data:ro
+    ports:
+      - "5004:5000"
+
+  gateway:
+    environment:
+      OSRM_BASE_URL: http://osrm:5000
+      OSRM_FOOT_BASE_URL: http://osrm-foot:5000
+      OSRM_MOTORCYCLE_BASE_URL: http://osrm-motorcycle:5000
+      ROUTING_DATA_READY: "1"
+    depends_on:
+      osrm:
+        condition: service_started
+      osrm-foot:
+        condition: service_started
+      osrm-motorcycle:
+        condition: service_started
+
+  pooling-service:
+    environment:
+      OSRM_BASE_URL: http://osrm:5000
+    depends_on:
+      osrm:
+        condition: service_started
+
+  stop-optimization-service:
+    environment:
+      OSRM_BASE_URL: http://osrm:5000
+    depends_on:
+      osrm:
+        condition: service_started

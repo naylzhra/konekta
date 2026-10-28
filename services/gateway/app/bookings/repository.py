@@ -68,7 +68,9 @@ _STOP_COLUMNS = """
 """
 
 _BOOKING_COLUMNS = """
-    b.id, b.user_id, b.trip_plan_id, b.status::text AS status, b.seats,
+    b.id, b.user_id, b.trip_plan_id,
+    (SELECT p.corridor_id FROM trip_plans p WHERE p.id = b.trip_plan_id) AS corridor_id,
+    b.status::text AS status, b.seats,
     b.pickup_stop_id, b.pickup_stop_name, b.pickup_stop_type::text AS pickup_stop_type,
     ST_Y(b.pickup_location::geometry) AS pickup_lat, ST_X(b.pickup_location::geometry) AS pickup_lng,
     b.dropoff_stop_id, b.dropoff_stop_name, b.dropoff_stop_type::text AS dropoff_stop_type,
@@ -107,6 +109,7 @@ def _booking_from_row(row: asyncpg.Record) -> BookingRecord:
         id=row["id"],
         status=BookingStatus(row["status"]),
         trip_plan_id=row["trip_plan_id"],
+        corridor_id=row["corridor_id"],
         seats=row["seats"],
         pickup_stop=_snapshot(row, "pickup"),
         dropoff_stop=_snapshot(row, "dropoff"),
@@ -127,6 +130,15 @@ class BookingRepository:
         self._pool = pool
 
     # --- stops -------------------------------------------------------------
+
+    async def get_active_stop(self, stop_id: UUID) -> Optional[Stop]:
+        row = await self._pool.fetchrow(
+            f"""SELECT {_STOP_COLUMNS} FROM stops s
+                WHERE s.id = $1 AND s.retired_at IS NULL
+                  AND (s.valid_until IS NULL OR s.valid_until > now())""",
+            stop_id,
+        )
+        return _stop_from_row(row) if row else None
 
     async def upsert_stop(self, stop: Stop) -> None:
         await self._pool.execute(
@@ -151,9 +163,9 @@ class BookingRepository:
             f"""
             INSERT INTO trip_plans (
                 id, user_id, origin, destination, pickup_stop_id, dropoff_stop_id,
-                corridor_id, legs, fare_estimate_idr, eta_minutes, expires_at
+                corridor_id, legs, fare_estimate_idr, eta_minutes, expires_at, direction
             )
-            VALUES ($1, $2, {_point_sql(3, 4)}, {_point_sql(5, 6)}, $7, $8, $9, $10::jsonb, $11, $12, $13)
+            VALUES ($1, $2, {_point_sql(3, 4)}, {_point_sql(5, 6)}, $7, $8, $9, $10::jsonb, $11, $12, $13, $14)
             """,
             plan.id,
             user_id,
@@ -168,12 +180,13 @@ class BookingRepository:
             plan.fare_estimate_idr,
             plan.eta_minutes,
             plan.expires_at,
+            plan.direction,
         )
 
     async def get_trip_plan(self, plan_id: UUID, user_id: Optional[UUID] = None) -> Optional[TripPlanRecord]:
         row = await self._pool.fetchrow(
             f"""
-            SELECT p.id, p.user_id, p.corridor_id, p.legs, p.fare_estimate_idr, p.eta_minutes,
+            SELECT p.id, p.user_id, p.corridor_id, p.direction, p.legs, p.fare_estimate_idr, p.eta_minutes,
                    p.expires_at, p.created_at,
                    ST_Y(p.origin::geometry) AS origin_lat, ST_X(p.origin::geometry) AS origin_lng,
                    ST_Y(p.destination::geometry) AS dest_lat, ST_X(p.destination::geometry) AS dest_lng,
@@ -203,6 +216,7 @@ class BookingRepository:
             pickup_stop=_stop_from_row(row, "pu_"),
             dropoff_stop=_stop_from_row(row, "do_"),
             corridor_id=row["corridor_id"],
+            direction=row["direction"],
             expires_at=row["expires_at"],
         )
         return TripPlanRecord(plan=plan, user_id=row["user_id"], created_at=row["created_at"])

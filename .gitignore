@@ -7,6 +7,8 @@ __pycache__/
 *.pyc
 .venv/
 venv/
+/ui/
+.idea/
 
 # Node
 node_modules/
@@ -22,3 +24,6 @@ apps/**/build/
 
 # Docker/OS
 .DS_Store
+infra/osrm/data/
+infra/osrm/geofabrik/
+.testdeps/

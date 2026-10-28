@@ -42,6 +42,8 @@ class StopSnapshot(BaseModel):
 class LegMode(StrEnum):
     WALK = "walk"
     FEEDER = "feeder"
+    MOTORCYCLE = "motorcycle"
+    CAR = "car"
 
 
 class TripLeg(BaseModel):
@@ -69,6 +71,8 @@ class TripPlan(BaseModel):
     pickup_stop: Optional[Stop] = None
     dropoff_stop: Optional[Stop] = None
     corridor_id: Optional[str] = None
+    # Direction the corridor is travelled in for this trip.
+    direction: Optional[Literal["forward", "backward"]] = None
     # nearest available feeder's ETA to the pickup stop at planning time; not stored
     nearest_feeder_eta_s: Optional[int] = None
     expires_at: datetime
@@ -94,6 +98,7 @@ class Booking(BaseModel):
     id: UUID
     status: BookingStatus
     trip_plan_id: Optional[UUID] = None
+    corridor_id: Optional[str] = None
     seats: int
     pickup_stop: Optional[StopSnapshot] = None
     dropoff_stop: Optional[StopSnapshot] = None
@@ -160,6 +165,7 @@ class ErrorCode(StrEnum):
     NOT_FOUND = "not_found"
     CONSENT_REQUIRED = "consent_required"
     NO_ROUTE = "no_route"
+    OUTSIDE_SERVICE_AREA = "outside_service_area"
     ROUTING_UNAVAILABLE = "routing_unavailable"
     CONCURRENT_UPDATE = "concurrent_update"
     INVALID_CURSOR = "invalid_cursor"

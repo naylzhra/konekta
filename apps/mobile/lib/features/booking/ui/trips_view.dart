@@ -47,10 +47,6 @@ class _TripsViewState extends State<TripsView> {
             children: [
               const Text(BookingStrings.tripsTitle, style: AppTextStyles.headlineLg),
               const SizedBox(height: AppSpacing.md),
-              if (!booking.isOnline) ...[
-                const BookingNotice(icon: Icons.cloud_off, message: BookingStrings.offline),
-                const SizedBox(height: AppSpacing.sm),
-              ],
               const Text(BookingStrings.activeTripTitle, style: AppTextStyles.headlineMd),
               const SizedBox(height: AppSpacing.xs),
               if (active != null)
@@ -60,7 +56,7 @@ class _TripsViewState extends State<TripsView> {
               const SizedBox(height: AppSpacing.lg),
               const Text(BookingStrings.historyTitle, style: AppTextStyles.headlineMd),
               const SizedBox(height: AppSpacing.xs),
-              if (history.error != null) ...[
+              if (history.error != null && !history.error!.code.isTransient) ...[
                 BookingErrorNotice(
                   error: history.error!,
                   onRetry: history.isLoaded && history.hasMore ? history.loadMore : history.refresh,

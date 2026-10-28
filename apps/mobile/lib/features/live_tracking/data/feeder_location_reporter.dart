@@ -1,9 +1,10 @@
 import '../../../core/location/user_location_provider.dart';
+import '../domain/feeder_models.dart';
 import 'feeder_api.dart';
 
 /// Sends the on-duty driver's location to the gateway
 abstract class FeederLocationReporter {
-  Future<DateTime> report(UserLocation location);
+  Future<DateTime> report(UserLocation location, {RouteDirection? direction});
   Future<void> goOffline();
 }
 
@@ -16,12 +17,14 @@ class RestFeederLocationReporter implements FeederLocationReporter {
   final String _token;
 
   @override
-  Future<DateTime> report(UserLocation location) => _api.reportPosition(
+  Future<DateTime> report(UserLocation location, {RouteDirection? direction}) =>
+      _api.reportPosition(
         _token,
         lat: location.lat,
         lng: location.lng,
         heading: location.headingDeg,
         accuracyM: location.accuracyM,
+        direction: direction,
       );
 
   @override

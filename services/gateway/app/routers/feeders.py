@@ -1,6 +1,6 @@
 # Live tracking REST (DESIGN.md §5.8). Drivers report their position here;
 # subscribers receive it as `feeder.position` over the WS hub (§5.1).
-from typing import NoReturn, Optional
+from typing import Literal, NoReturn, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
@@ -10,6 +10,8 @@ from app.feeders.dependencies import get_feeder_repository, get_feeder_service
 from app.feeders.models import (
     AssignedFeeder,
     CorridorList,
+    CorridorPath,
+    CorridorStops,
     FeederError,
     LiveFeeder,
     LiveFeederList,
@@ -36,6 +38,30 @@ def _driver_id(session: dict) -> UUID:
 @router.get("/corridors", response_model=CorridorList)
 async def list_corridors(repository: FeederRepository = Depends(get_feeder_repository)) -> CorridorList:
     return CorridorList(items=await repository.list_corridors())
+
+
+@router.get("/corridors/{corridor_id}/stops", response_model=CorridorStops)
+async def corridor_stops(
+    corridor_id: str,
+    direction: Literal["forward", "backward"] = "forward",
+    repository: FeederRepository = Depends(get_feeder_repository),
+) -> CorridorStops:
+    route = await repository.route_stops(corridor_id, direction)
+    if route is None:
+        raise HTTPException(status_code=404, detail="Corridor not found")
+    return route
+
+
+@router.get("/corridors/{corridor_id}/path", response_model=CorridorPath)
+async def corridor_path(
+    corridor_id: str,
+    direction: Literal["forward", "backward"] = "forward",
+    repository: FeederRepository = Depends(get_feeder_repository),
+) -> CorridorPath:
+    path = await repository.route_path(corridor_id, direction)
+    if path is None:
+        raise HTTPException(status_code=404, detail="Corridor not found")
+    return path
 
 
 # Snapshot for the passenger map; live updates follow on corridor:<id> topics.

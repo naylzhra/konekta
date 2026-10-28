@@ -57,6 +57,8 @@ def _nearest_clearance(candidate: StopCandidate, zones: list[RestrictedZone]) ->
 def _relocation_target(
     candidate: StopCandidate, stops: list[ExistingStop], params: EvaluationParams
 ) -> Optional[tuple[ExistingStop, float]]:
+    if params.max_shift_m == 0:
+        return None
     same_corridor = [s for s in stops if s.corridor_id == candidate.corridor_id]
     if not same_corridor:
         return None
@@ -90,7 +92,25 @@ async def _evaluate_one(
     other_stops = [
         s for s in request.existing_stops if s.corridor_id == candidate.corridor_id and s.id != relocated_id
     ]
+    # Automatic new-stop proposals (max_shift_m=0) must sit between two
+    # operational stops along the corridor, never beyond an endpoint.
+    candidate_progress = project_onto_path(candidate.location, corridor.path).along_m
+    stop_progress = [project_onto_path(s.location, corridor.path).along_m for s in other_stops]
+    between_stops = any(p < candidate_progress for p in stop_progress) and any(
+        p > candidate_progress for p in stop_progress
+    )
+    adjacent_gap = 0.0
+    if between_stops:
+        before = max(p for p in stop_progress if p < candidate_progress)
+        after = min(p for p in stop_progress if p > candidate_progress)
+        adjacent_gap = after - before
     spacing = min((haversine_m(s.location, candidate.location) for s in other_stops), default=float("inf"))
+    spacing_value = adjacent_gap if params.max_shift_m == 0 else spacing
+    spacing_passed = (
+        adjacent_gap > params.min_stop_spacing_m
+        if params.max_shift_m == 0
+        else spacing >= params.min_stop_spacing_m
+    )
     added_s = await _added_travel_s(candidate, corridor, route)
 
     checks = [
@@ -116,10 +136,12 @@ async def _evaluate_one(
         ),
         CriterionResult(
             criterion=Criterion.STOP_SPACING,
-            passed=spacing >= params.min_stop_spacing_m,
-            value=round(spacing, 1) if other_stops else 0.0,
+            passed=spacing_passed and (params.max_shift_m > 0 or between_stops),
+            value=round(spacing_value, 1) if other_stops else 0.0,
             threshold=params.min_stop_spacing_m,
-            detail=None if other_stops else "no other stops on this corridor",
+            detail=("candidate must be between two stops" if params.max_shift_m == 0 and not between_stops
+                    else "neighboring stop gap must exceed threshold" if params.max_shift_m == 0 and not spacing_passed
+                    else None if other_stops else "no other stops on this corridor"),
         ),
         CriterionResult(
             criterion=Criterion.OPERATIONAL_TIME,
@@ -164,7 +186,8 @@ def _resolve_conflicts(
             (
                 other
                 for other in kept
-                if haversine_m(locations[other.candidate_id], locations[evaluation.candidate_id])
+                if params.max_shift_m > 0
+                and haversine_m(locations[other.candidate_id], locations[evaluation.candidate_id])
                 < params.min_stop_spacing_m
                 or (evaluation.relocates_stop_id is not None and evaluation.relocates_stop_id == other.relocates_stop_id)
             ),

@@ -45,7 +45,7 @@ class _BookingScopeState extends State<BookingScope> {
     _data = BookingScopeData(
       session: session,
       dependencies: dependencies,
-      locations: widget.locations ?? TripLocations.fromEnvironment(),
+      locations: widget.locations ?? TripLocations.fromEnvironment(apiClient: session.apiClient),
     );
     if (!dependencies.isMock) session.wsClient.connect();
     dependencies.booking.start();

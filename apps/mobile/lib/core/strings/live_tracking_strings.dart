@@ -58,7 +58,7 @@ class LiveTrackingStrings {
 
   // Passenger map
   static const noActiveTrip = 'Belum ada perjalanan aktif';
-  static const noActiveTripHint = 'Pesan feeder dari tab Home untuk melihat posisinya di sini.';
+  static const noActiveTripHint = 'Alur rute tetap terlihat. Posisi feeder muncul saat kendaraan beroperasi.';
   static const searchingFeeder = 'Mencari feeder untuk perjalanan Anda...';
   static const waitingFeederPosition = 'Menunggu posisi feeder...';
   static String feederTitle(String feederId) => 'Feeder $feederId';
@@ -72,6 +72,7 @@ class LiveTrackingStrings {
   static const reconnecting = 'Koneksi terputus, menyambungkan ulang...';
   static const showMyLocation = 'Tampilkan lokasi saya';
   static const turnOnGps = 'Nyalakan GPS';
+  static const recenterOnMe = 'Kembali ke posisi saya';
   static const recenter = 'Pusatkan peta';
   static String feedersOnDuty(int count) => '$count feeder sedang beroperasi';
 

@@ -16,9 +16,13 @@ class ServiceAreaMap extends StatelessWidget {
     this.controller,
     this.initialCenter,
     this.markers = const [],
+    this.routePoints = const [],
+    this.routePolylines = const [],
     this.onMapReady,
     this.interactive = true,
     this.onTap,
+    this.onMapTap,
+    this.onUserGesture,
   });
 
   final MapController? controller;
@@ -27,12 +31,18 @@ class ServiceAreaMap extends StatelessWidget {
   final VoidCallback? onMapReady;
   final LatLng? initialCenter;
   final List<Marker> markers;
+  final List<LatLng> routePoints;
+  final List<Polyline> routePolylines;
 
   /// False for a static preview (no pan/zoom, so it doesn't fight scrolling).
   final bool interactive;
 
   /// Taps on the map itself, not on a marker.
   final VoidCallback? onTap;
+  final void Function(LatLng point)? onMapTap;
+
+  /// The user panned, zoomed or rotated the map by hand.
+  final VoidCallback? onUserGesture;
 
   static const _tileUrl = _useMapbox
       ? 'https://api.mapbox.com/styles/v1/$_mapboxStyle/tiles/256/{z}/{x}/{y}@2x?access_token=$_mapboxToken'
@@ -53,11 +63,23 @@ class ServiceAreaMap extends StatelessWidget {
         maxZoom: 18,
         cameraConstraint: CameraConstraint.contain(bounds: _bounds),
         onMapReady: onMapReady,
-        onTap: onTap == null ? null : (_, __) => onTap!(),
+        onPositionChanged: onUserGesture == null ? null : (_, hasGesture) {
+          if (hasGesture) onUserGesture!();
+        },
+        onTap: onTap == null && onMapTap == null ? null : (_, point) {
+          onTap?.call();
+          onMapTap?.call(point);
+        },
         interactionOptions: InteractionOptions(flags: interactive ? InteractiveFlag.all : InteractiveFlag.none),
       ),
       children: [
         TileLayer(urlTemplate: _tileUrl, userAgentPackageName: 'com.example.konekta_mobile'),
+        if (routePoints.length > 1 || routePolylines.isNotEmpty)
+          PolylineLayer(polylines: [
+            if (routePoints.length > 1)
+              Polyline(points: routePoints, color: const Color(0xFF1769AA), strokeWidth: 5),
+            ...routePolylines,
+          ]),
         MarkerLayer(markers: markers),
         const RichAttributionWidget(
           attributions: [

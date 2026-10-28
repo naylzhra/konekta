@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -8,6 +10,7 @@ from app.models import (
     Corridor,
     Criterion,
     DemandPoint,
+    EvaluationParams,
     EvaluateRequest,
     ExistingStop,
     FeederHeuristicParams,
@@ -47,6 +50,18 @@ def candidate(cid: str, location: GeoPoint, users: int = 6, spread_m: float = 50
 
 def check(evaluation, criterion: Criterion):
     return next(c for c in evaluation.checks if c.criterion == criterion)
+
+
+def test_automatic_new_stop_must_fit_between_two_stops() -> None:
+    south = ExistingStop(id="south", location=offset(ON_ROUTE, north_m=-350), corridor_id="K1", type="static")
+    north = ExistingStop(id="north", location=offset(ON_ROUTE, north_m=350), corridor_id="K1", type="static")
+    params = EvaluationParams(max_shift_m=0, min_stop_spacing_m=300)
+    [valid] = asyncio.run(evaluate(candidate("middle", ON_ROUTE), existing_stops=[south, north], params=params))
+    assert valid.eligible and check(valid, Criterion.STOP_SPACING).passed
+    [outside] = asyncio.run(evaluate(candidate("outside", offset(ON_ROUTE, north_m=700)),
+                                     existing_stops=[south, north], params=params))
+    assert not outside.eligible
+    assert check(outside, Criterion.STOP_SPACING).detail == "candidate must be between two stops"
 
 
 async def evaluate(*candidates: StopCandidate, **extra) -> list:

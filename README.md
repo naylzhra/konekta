@@ -46,20 +46,28 @@ client → **stop-optimization-service** scores candidate virtual stops
 mobile/dashboard over WebSocket. **Redis** (GEO commands) holds live feeder
 positions; **Postgres/PostGIS** is the system of record.
 
-### osrm-mock — temporary, pending real Bandung map data
+### Rute K1 dan OSRM
 
-We don't yet have the real Bandung `.osm.pbf` extract processed into
-`.osrm` files (that's a separate offline pipeline for later). Until then,
-`services/osrm-mock` is a lightweight FastAPI service that mimics OSRM's
-`/route/v1/{profile}/{coordinates}` response shape: it returns a
-straight-line path through the given waypoints with a fake
-duration/distance derived from haversine distance and an assumed average
-speed.
+Rute K1 beserta 51 stop berkoordinat tercatat di [ROUTES.md](ROUTES.md).
+K2 tetap tampil sebagai data dummy tanpa geometri jalan. Migrasi
+`009_feeder_1_route.sql` sampai `011_k1_active_stops.sql` menyiapkan rute,
+riwayat kandidat virtual stop, dan stop naik/turun K1. Persetujuan kandidat
+hanya untuk role `government`; stop virtual yang disetujui aktif sampai
+dipensiunkan.
 
-`pooling-service`'s OSRM client (`app/osrm_client.py`) reads its target
-from the `OSRM_BASE_URL` env var, which defaults to `osrm-mock`. Once the
-real Bandung map data is processed and a real OSRM instance is deployed,
-switching over is just changing `OSRM_BASE_URL` — no code changes needed.
+### Data jalan Bandung
+
+Ekstrak Geofabrik Bandung dan graf OSRM lokal berada di `infra/osrm/data/`
+(diabaikan Git). Jalankan overlay pada [panduan OSRM](infra/osrm/README.md)
+untuk memakai jalan nyata pada gateway, pooling, dan optimasi stop. Peta
+penumpang mengambil geometri K1 dari `GET /corridors/K1/path` tanpa perlu
+booking atau feeder aktif. Koridor booking aktif ditonjolkan pada peta.
+Setelah graf diperbarui, jalankan `sync_k1_route` agar lintasan di database
+ikut diperbarui.
+
+Compose tanpa overlay masih menyediakan `osrm-mock` untuk pengembangan tanpa
+data lokal. Mock mengembalikan garis lurus dan durasi perkiraan. Tile
+OpenStreetMap pada mobile hanya latar peta, bukan sumber routing.
 
 ## Roles & which client they use
 
@@ -136,6 +144,9 @@ The API client in `apps/mobile/lib/core/api/api_client.dart` defaults to
 localhost) and hits gateway's `/health` endpoint.
 
 ## Repo conventions
+
+Ambang usulan titik virtual, alur persetujuan, dan profil rute tiap moda
+didokumentasikan di [docs/virtual-stops.md](docs/virtual-stops.md).
 
 - Each Python service is independently deployable: its own
   `requirements.txt` and `Dockerfile`, entrypoint at `app/main.py`, exposing

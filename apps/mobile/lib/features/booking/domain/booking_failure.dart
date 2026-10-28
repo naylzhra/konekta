@@ -14,6 +14,7 @@ enum BookingFailureCode {
   notFound('not_found'),
   consentRequired('consent_required'),
   noRoute('no_route'),
+  outsideServiceArea('outside_service_area'),
   routingUnavailable('routing_unavailable'),
   concurrentUpdate('concurrent_update'),
   invalidCursor('invalid_cursor'),
