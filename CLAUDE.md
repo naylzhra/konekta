@@ -32,6 +32,7 @@ services/
 
 infra/
   docker/        docker-compose.yml for local dev
+  azure/         prod deploy on one Azure VM: compose override + Caddy (see its README)
   render/        Render deploy guide + remote migration runner (blueprint: /render.yaml)
   railway/       deploy config (placeholder)
   db/            Postgres/PostGIS migrations + seed data

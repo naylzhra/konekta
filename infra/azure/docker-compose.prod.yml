@@ -1,0 +1,74 @@
+# Production override for a single Azure Linux VM (Azure for Students).
+# Layered on top of infra/docker/docker-compose.yml — see infra/azure/README.md:
+#
+#   docker compose --env-file infra/azure/.env \
+#     -f infra/docker/docker-compose.yml -f infra/azure/docker-compose.prod.yml \
+#     up -d --build
+#
+# Relative paths below resolve against infra/docker/ (the first file's dir).
+# `!reset` / `!override` need Docker Compose v2.24+.
+
+services:
+  postgres:
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in infra/azure/.env}
+    ports: !reset []
+    restart: unless-stopped
+
+  redis:
+    ports: !reset []
+    restart: unless-stopped
+
+  osrm-mock:
+    ports: !reset []
+    restart: unless-stopped
+
+  gateway:
+    # Only Caddy talks to the gateway; nothing but 80/443 is exposed publicly.
+    ports: !override
+      - "127.0.0.1:8000:8000"
+    environment:
+      DATABASE_URL: postgresql://konekta:${POSTGRES_PASSWORD}@postgres:5432/konekta
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173}
+      BOOKING_SIMULATOR: ${BOOKING_SIMULATOR:-0}
+    restart: unless-stopped
+
+  pooling-service:
+    ports: !reset []
+    environment:
+      DATABASE_URL: postgresql://konekta:${POSTGRES_PASSWORD}@postgres:5432/konekta
+    restart: unless-stopped
+
+  stop-optimization-service:
+    ports: !reset []
+    environment:
+      DATABASE_URL: postgresql://konekta:${POSTGRES_PASSWORD}@postgres:5432/konekta
+    restart: unless-stopped
+
+  forecasting-service:
+    # Nothing calls it yet; skipped to save RAM on the 1 GB free VM. Start it
+    # with `--profile forecasting` once the gateway uses it.
+    profiles: ["forecasting"]
+    ports: !reset []
+    environment:
+      DATABASE_URL: postgresql://konekta:${POSTGRES_PASSWORD}@postgres:5432/konekta
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2-alpine
+    environment:
+      API_DOMAIN: ${API_DOMAIN:?set API_DOMAIN in infra/azure/.env}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ../azure/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - gateway
+    restart: unless-stopped
+
+volumes:
+  caddy_data:
+  caddy_config:

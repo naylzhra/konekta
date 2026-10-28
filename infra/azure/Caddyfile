@@ -1,0 +1,7 @@
+# Terminates HTTPS (auto Let's Encrypt cert) and proxies to the gateway,
+# WebSocket upgrades included. Access logging is deliberately left off: the
+# WS hub takes its session token in the query string (`/ws/{id}?token=...`).
+{$API_DOMAIN} {
+	encode gzip
+	reverse_proxy gateway:8000
+}
