@@ -13,7 +13,8 @@ from app.bookings.clients import FeederPosition
 from app.feeders.dependencies import get_feeder_service
 from app.feeders.models import AssignedFeeder, FeederError, PositionReport
 from app.feeders.repository import FeederRepository
-from app.feeders.service import FeederTrackingService, HubFeederPositionPublisher
+from app.feeders import config
+from app.feeders.service import FeederTrackingService, HubFeederPositionPublisher, stop_arrivals
 from app.main import app
 from app.websocket.manager import ConnectionManager
 from tests.conftest import DRIVER_ID, _fake_session, auth
@@ -31,6 +32,14 @@ class FakeRepository:
     def __init__(self, feeder: Optional[AssignedFeeder] = FEEDER, occupancy: int = 2) -> None:
         self.feeder = feeder
         self._occupancy = occupancy
+        # route_progress: stops (position, name, along_m) and along_m by feeder latitude
+        self.route_stops: Optional[list[tuple[int, str, Optional[float]]]] = None
+        self.along_by_lat: dict[float, float] = {}
+
+    async def route_progress(self, corridor_id, direction, points):
+        if self.route_stops is None:
+            return None
+        return self.route_stops, [self.along_by_lat.get(lat) for lat, _ in points]
 
     async def get_for_driver(self, driver_id: UUID) -> Optional[AssignedFeeder]:
         return self.feeder
@@ -401,3 +410,48 @@ async def test_feeder_id_is_required_for_drivers_only(http):
         assert response.json()["detail"] == "Feeder is required for drivers only"
 
     assert (await http.post("/auth/register", json=_register("+628333", "passenger"))).status_code == 201
+
+
+# --- stop arrivals -------------------------------------------------------------
+
+
+def _live(feeder_id: str, lat: float, direction: Optional[str] = "forward") -> FeederPosition:
+    return FeederPosition(
+        feeder_id=feeder_id, lat=lat, lng=107.6191, occupancy=2, capacity=8,
+        corridor_id="K1", direction=direction, updated_at=NOW,
+    )
+
+
+def test_stop_arrivals_skip_passed_and_far_feeders():
+    feeders = [_live("near", -6.91), _live("passed", -6.92), _live("far", -6.93), _live("off-line", -6.94)]
+    speed = config.FEEDER_AVG_SPEED_MPS
+    # stop at 1000 m: "near" 550 m before it, "passed" 100 m after, "far" 2000 m before
+    arrivals = stop_arrivals(1000, feeders, [450, 1100, -1000, None], max_eta_s=300)
+    assert [(a.feeder_id, a.eta_s) for a in arrivals] == [("near", round(550 / speed))]
+    # within the passed tolerance it counts as arriving now
+    assert stop_arrivals(1000, feeders[:1], [1000 + config.ARRIVAL_PASSED_TOLERANCE_M], 300)[0].eta_s == 0
+    assert stop_arrivals(None, feeders, [450, 1100, -1000, None], 300) == []
+
+
+async def test_arrivals_endpoint_lists_soonest_feeders_per_stop(feeder_client, positions, tracking):
+    tracking._repository.route_stops = [(1, "Halte A", 0.0), (2, "Halte B", 1000.0), (3, "Halte C", 3000.0)]
+    tracking._repository.along_by_lat = {-6.91: 900.0, -6.92: 200.0, -6.93: 100.0}
+    positions.stored += [_live("F1", -6.91), _live("F2", -6.92), _live("back", -6.93, direction="backward")]
+
+    response = await feeder_client.get("/corridors/K1/arrivals", headers=auth("t-passenger"))
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["direction"] == "forward"
+    by_stop = {item["name"]: [a["feeder_id"] for a in item["arrivals"]] for item in body["items"]}
+    # Halte B: F1 is 100 m away, F2 800 m (~145 s); "back" travels the other way.
+    assert by_stop == {"Halte A": [], "Halte B": ["F1", "F2"], "Halte C": []}
+
+    response = await feeder_client.get(
+        "/corridors/K1/arrivals", params={"max_eta_s": 60}, headers=auth("t-passenger")
+    )
+    assert [a["feeder_id"] for a in response.json()["items"][1]["arrivals"]] == ["F1"]
+
+
+async def test_arrivals_endpoint_unknown_corridor_is_404(feeder_client):
+    response = await feeder_client.get("/corridors/NOPE/arrivals", headers=auth("t-passenger"))
+    assert response.status_code == 404

@@ -82,6 +82,30 @@ class LiveTrackingStrings {
   static const noRouteFound = 'Rute tidak ditemukan';
   static String routeFeeders(int count) => count == 0 ? 'Tidak ada feeder beroperasi' : '$count feeder beroperasi';
   static const clearRoute = 'Hapus filter rute';
+
+  // Route list (Peta bottom sheet)
+  static const routesTitle = 'Rute';
+  static const watchMultiple = 'Pantau beberapa';
+  static const pickRoutesHint = 'Pilih rute yang ingin dipantau di peta.';
+  static String watchRoutes(int count) => count == 0 ? 'Pilih rute' : 'Pantau $count rute';
+  static String watchingRoutes(List<String> names) =>
+      names.length == 1 ? 'Memantau ${names.single}' : 'Memantau ${names.length} rute';
+  static const showAllRoutes = 'Tampilkan semua';
+
+  // Route detail
+  static const routeDetailTitle = 'Detail Rute';
+  static const follow = 'Ikuti';
+  static const following = 'Diikuti';
+  static const operatingHours = 'Jam operasional';
+  static const operatingDays = 'Hari operasional';
+  static const fare = 'Tarif';
+  static String fareFrom(String rupiah) => 'Mulai $rupiah';
+  static const directionForward = 'Arah pergi';
+  static const directionBackward = 'Arah balik';
+  static String directionLabel(String from, String to) => '$from - $to';
+  static const finalDestination = 'TUJUAN AKHIR';
+  static String etaMinutes(int etaS) => etaS < 60 ? 'Tiba' : '${(etaS / 60).round()} min';
+  static const routeDetailFailed = 'Detail rute belum dapat dimuat.';
   static const fleetLoadFailed = 'Gagal memuat feeder. Ketuk untuk coba lagi.';
 
   // Feeder info (tapped on the map)

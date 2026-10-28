@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:geolocator/geolocator.dart';
@@ -16,18 +17,21 @@ import '../../live_tracking/state/feeder_fleet_controller.dart';
 import '../../live_tracking/state/passenger_map_controller.dart';
 import '../../live_tracking/ui/map_markers.dart';
 import '../../live_tracking/ui/service_area_map.dart';
-import '../../live_tracking/ui/route_stops_page.dart';
+import '../../live_tracking/ui/route_detail_page.dart';
 import '../../../shared_widgets/nav_banner.dart';
 
-/// Every on-duty feeder (searchable by route), the passenger's booked feeder
-/// highlighted, their pickup stop and (if they allow it) their own location.
+/// Every on-duty feeder, the passenger's booked feeder highlighted, their
+/// pickup stop and (if they allow it) their own location. A bottom sheet
+/// lists the routes: tap one for its detail page, or watch several at once.
 class MapTab extends StatefulWidget {
   const MapTab({super.key, required this.controller, required this.fleet, required this.loadRoutePath,
-    this.booking, this.loadJourney});
+    required this.loadRouteStops, required this.loadArrivals, this.booking, this.loadJourney});
 
   final PassengerMapController controller;
   final FeederFleetController fleet;
   final Future<List<LatLng>> Function(String corridorId) loadRoutePath;
+  final Future<CorridorRoute> Function(String corridorId, RouteDirection direction) loadRouteStops;
+  final Future<List<StopArrivals>> Function(String corridorId, RouteDirection direction) loadArrivals;
   final BookingController? booking;
   final Future<Journey> Function(String bookingId, GeoPoint? location)? loadJourney;
 
@@ -61,6 +65,19 @@ class _MapTabState extends State<MapTab> {
   bool _following = true;
   static const _navZoom = 17.5;
 
+  // Route sheet: share of the tab's height, tracked so the recenter button
+  // and camera framing stay clear of it.
+  static const _sheetInitial = 0.45;
+  static const _sheetMin = 0.15;
+  static const _sheetMax = 0.9;
+  final _sheetExtent = ValueNotifier<double>(_sheetInitial);
+  double _bodyHeight = 0;
+
+  /// "Pantau beberapa" mode: the list shows checkboxes and a watch button.
+  bool _multi = false;
+  Set<String> _picked = {};
+  final _routeQuery = TextEditingController();
+
   PassengerMapController get _map => widget.controller;
   FeederFleetController get _fleet => widget.fleet;
 
@@ -85,6 +102,8 @@ class _MapTabState extends State<MapTab> {
     _fleet.removeListener(_loadAvailableRoutes);
     _lifecycle.dispose();
     _mapController.dispose();
+    _sheetExtent.dispose();
+    _routeQuery.dispose();
     super.dispose();
   }
 
@@ -183,13 +202,28 @@ class _MapTabState extends State<MapTab> {
     _fit(points.isNotEmpty ? points : _routePaths.values.expand((route) => route).toList());
   }
 
-  void _selectRoute(String? corridorId) {
-    _fleet.filterByCorridor(corridorId);
-    setState(() => _selectedFeederId = null);
-    if (corridorId != null) {
-      final points = _routePaths[corridorId];
-      if (points != null && points.isNotEmpty) _fit(points);
-    }
+  /// Narrows the map to [corridorIds] (all routes when empty) and frames them.
+  void _watchRoutes(Set<String> corridorIds) {
+    _fleet.filterByCorridors(corridorIds);
+    setState(() {
+      _selectedFeederId = null;
+      _multi = false;
+    });
+    final points = [for (final id in corridorIds) ...?_routePaths[id]];
+    _fit(points.isNotEmpty ? points : _routePaths.values.expand((route) => route).toList());
+  }
+
+  Future<void> _openRoute(CorridorOption corridor) async {
+    final follow = await Navigator.of(context).push<bool>(MaterialPageRoute(
+      builder: (_) => RouteDetailPage(
+        corridor: corridor,
+        loadStops: (direction) => widget.loadRouteStops(corridor.id, direction),
+        loadArrivals: (direction) => widget.loadArrivals(corridor.id, direction),
+        feederNumber: (feederId) => _fleet.feederOption(feederId)?.number,
+        following: setEquals(_fleet.corridorFilters, {corridor.id}),
+      ),
+    ));
+    if (follow == true && mounted) _watchRoutes({corridor.id});
   }
 
   void _loadAvailableRoutes() {
@@ -206,7 +240,7 @@ class _MapTabState extends State<MapTab> {
       final points = await widget.loadRoutePath(corridorId);
       if (!mounted) return;
       setState(() => _routePaths[corridorId] = points);
-      if (points.isNotEmpty && (_fleet.corridorFilter == corridorId ||
+      if (points.isNotEmpty && (_fleet.corridorFilters.contains(corridorId) ||
           _map.trip?.corridorId == corridorId || (_map.trip == null && _routePaths.length == 1))) {
         _fit(points);
       }
@@ -217,19 +251,27 @@ class _MapTabState extends State<MapTab> {
     }
   }
 
+  /// Every route, or only the watched ones (plus the booked one) while the
+  /// map is narrowed.
   List<Polyline> _routeLines() {
-    final selected = _fleet.corridorFilter;
+    final watched = _fleet.corridorFilters;
     final booked = _map.trip?.corridorId;
-    final ids = _routePaths.keys.toList()
-      ..sort((a, b) => (a == booked ? 1 : a == selected ? 0 : -1)
-          .compareTo(b == booked ? 1 : b == selected ? 0 : -1));
+    int rank(String id) => id == booked ? 1 : watched.contains(id) ? 0 : -1;
+    final ids = [
+      for (final id in _routePaths.keys)
+        if (watched.isEmpty || watched.contains(id) || id == booked) id,
+    ]..sort((a, b) => rank(a).compareTo(rank(b)));
     return [
       for (final id in ids)
         if (_routePaths[id]!.length > 1)
           Polyline(
             points: _routePaths[id]!,
-            color: id == booked ? const Color(0xFF087F5B) : id == selected ? const Color(0xFF1769AA) : const Color(0x991769AA),
-            strokeWidth: id == booked ? 8 : id == selected ? 6 : 4,
+            color: id == booked
+                ? const Color(0xFF087F5B)
+                : watched.contains(id)
+                    ? const Color(0xFF1769AA)
+                    : const Color(0x991769AA),
+            strokeWidth: id == booked ? 8 : watched.contains(id) ? 6 : 4,
           ),
       if (_journey != null && _journey!.current.points.length > 1)
         Polyline(
@@ -251,7 +293,7 @@ class _MapTabState extends State<MapTab> {
     _mapController.fitCamera(
       CameraFit.coordinates(
         coordinates: points,
-        padding: const EdgeInsets.fromLTRB(64, 160, 64, 220),
+        padding: EdgeInsets.fromLTRB(64, 120, 64, _sheetExtent.value * _bodyHeight + 32),
         maxZoom: 17,
       ),
     );
@@ -292,114 +334,258 @@ class _MapTabState extends State<MapTab> {
 
   @override
   Widget build(BuildContext context) {
-    return ListenableBuilder(
-      listenable: Listenable.merge([_map, _fleet]),
-      builder: (context, _) {
-        final permission = _map.permission;
-        final selected = _selectedFleetFeeder();
-        return Stack(
-          children: [
-            ServiceAreaMap(
-              controller: _mapController,
-              routePolylines: _routeLines(),
-              onMapReady: _onMapReady,
-              onTap: () => setState(() => _selectedFeederId = null),
-              onUserGesture: _journey != null && _following
-                  ? () => setState(() => _following = false)
-                  : null,
-              markers: passengerMapMarkers(
-                _map,
-                fleet: _fleet,
-                selectedFeederId: _selectedFeederId,
-                onTapFeeder: (id) => setState(() => _selectedFeederId = id),
-              ),
-            ),
-            Positioned(
-              top: AppSpacing.sm,
-              left: AppSpacing.containerMargin,
-              right: AppSpacing.containerMargin,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  // During a journey the instruction bar replaces the route
-                  // search, as in turn-by-turn navigation.
-                  if (_journey != null)
-                    _JourneyBanner(stage: _journey!.current, me: _map.myLocation)
-                  else
-                    _RouteSearch(fleet: _fleet, onSelect: _selectRoute),
-                  if (_fleet.corridorFilter != null)
-                    Align(
-                      alignment: Alignment.centerLeft,
-                      child: ActionChip(
-                        avatar:
-                            const Icon(Icons.format_list_numbered, size: 18),
-                        label: const Text('Daftar halte rute'),
-                        onPressed: () =>
-                            Navigator.of(context).push(MaterialPageRoute<void>(
-                          builder: (_) => RouteStopsPage(
-                              corridorId: _fleet.corridorFilter!),
-                        )),
-                      ),
-                    ),
-                  if (_fleet.selectedCorridor?.isDummy == true) ...[
-                    const SizedBox(height: AppSpacing.xs),
-                    const _Banner(text: 'Koridor ini belum memiliki koordinat jalan. Rute K1 tetap ditampilkan.'),
-                  ],
-                  if (permission != null &&
-                      permission != LocationPermissionState.granted)
-                    Align(
-                      alignment: Alignment.centerLeft,
-                      child: Padding(
-                        padding: const EdgeInsets.only(top: AppSpacing.xs),
-                        child: ActionChip(
-                          avatar: const Icon(Icons.my_location, size: 18),
-                          label: Text(
-                            permission ==
-                                    LocationPermissionState.serviceDisabled
-                                ? LiveTrackingStrings.turnOnGps
-                                : LiveTrackingStrings.showMyLocation,
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        _bodyHeight = constraints.maxHeight;
+        return ListenableBuilder(
+          listenable: Listenable.merge([_map, _fleet]),
+          builder: (context, _) {
+            final permission = _map.permission;
+            final selected = _selectedFleetFeeder();
+            return Stack(
+              children: [
+                ServiceAreaMap(
+                  controller: _mapController,
+                  routePolylines: _routeLines(),
+                  onMapReady: _onMapReady,
+                  onTap: () => setState(() => _selectedFeederId = null),
+                  onUserGesture: _journey != null && _following
+                      ? () => setState(() => _following = false)
+                      : null,
+                  markers: passengerMapMarkers(
+                    _map,
+                    fleet: _fleet,
+                    selectedFeederId: _selectedFeederId,
+                    onTapFeeder: (id) => setState(() => _selectedFeederId = id),
+                  ),
+                ),
+                Positioned(
+                  top: AppSpacing.sm,
+                  left: AppSpacing.containerMargin,
+                  right: AppSpacing.containerMargin,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      // During a journey the instruction bar sits on top, as
+                      // in turn-by-turn navigation.
+                      if (_journey != null)
+                        _JourneyBanner(stage: _journey!.current, me: _map.myLocation),
+                      if (_fleet.selectedCorridor?.isDummy == true) ...[
+                        const SizedBox(height: AppSpacing.xs),
+                        const _Banner(text: 'Koridor ini belum memiliki koordinat jalan. Rute K1 tetap ditampilkan.'),
+                      ],
+                      if (permission != null &&
+                          permission != LocationPermissionState.granted)
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: Padding(
+                            padding: const EdgeInsets.only(top: AppSpacing.xs),
+                            child: ActionChip(
+                              avatar: const Icon(Icons.my_location, size: 18),
+                              label: Text(
+                                permission ==
+                                        LocationPermissionState.serviceDisabled
+                                    ? LiveTrackingStrings.turnOnGps
+                                    : LiveTrackingStrings.showMyLocation,
+                              ),
+                              onPressed: _enableMyLocation,
+                            ),
                           ),
-                          onPressed: _enableMyLocation,
+                        ),
+                    ],
+                  ),
+                ),
+                // Rides just above the sheet as it is dragged.
+                ValueListenableBuilder<double>(
+                  valueListenable: _sheetExtent,
+                  builder: (context, extent, child) => Positioned(
+                    right: AppSpacing.containerMargin,
+                    bottom: extent * _bodyHeight + AppSpacing.sm,
+                    child: child!,
+                  ),
+                  child: _journey != null && !_following
+                      ? FloatingActionButton.extended(
+                          heroTag: null,
+                          onPressed: _recenter,
+                          icon: const Icon(Icons.navigation),
+                          label: const Text(LiveTrackingStrings.recenterOnMe),
+                        )
+                      : FloatingActionButton.small(
+                          heroTag: null,
+                          tooltip: LiveTrackingStrings.recenter,
+                          onPressed: _recenter,
+                          child: const Icon(Icons.center_focus_strong),
+                        ),
+                ),
+                NotificationListener<DraggableScrollableNotification>(
+                  onNotification: (notification) {
+                    _sheetExtent.value = notification.extent;
+                    return false;
+                  },
+                  child: DraggableScrollableSheet(
+                    initialChildSize: _sheetInitial,
+                    minChildSize: _sheetMin,
+                    maxChildSize: _sheetMax,
+                    snap: true,
+                    snapSizes: const [_sheetInitial],
+                    builder: (context, scroll) => _routeSheet(scroll, selected),
+                  ),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  /// Trip status (when there is one), then every route: tap for its detail
+  /// page, or tick several in "Pantau beberapa" mode and watch them.
+  Widget _routeSheet(ScrollController scroll, FeederPosition? selected) {
+    final routes = _fleet.searchRoutes(_routeQuery.text);
+    final watched = _fleet.corridorFilters;
+    final Widget? status = selected != null
+        ? _FleetFeederCard(feeder: selected, fleet: _fleet)
+        : _journey != null
+            ? _JourneyCard(journey: _journey!)
+            : _map.status != FeederTrackingStatus.none
+                ? _TripCard(map: _map, onDuty: _fleet.onDutyCount)
+                : null;
+    return Material(
+      color: AppColors.surfaceContainerLowest,
+      elevation: 8,
+      shadowColor: const Color(0x33000000),
+      borderRadius: const BorderRadius.vertical(top: Radius.circular(AppRadius.xl)),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        children: [
+          Expanded(
+            child: ListView(
+              controller: scroll,
+              padding: const EdgeInsets.fromLTRB(
+                AppSpacing.containerMargin,
+                AppSpacing.sm,
+                AppSpacing.containerMargin,
+                AppSpacing.md,
+              ),
+              children: [
+                Center(
+                  child: Container(
+                    width: 40,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: AppColors.outlineVariant,
+                      borderRadius: BorderRadius.circular(AppRadius.full),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: AppSpacing.sm),
+                if (status != null) ...[status, const SizedBox(height: AppSpacing.md)],
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        LiveTrackingStrings.routesTitle,
+                        style: AppTextStyles.headlineMd.copyWith(
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.inverseSurface,
                         ),
                       ),
                     ),
-                ],
-              ),
-            ),
-            Positioned(
-              left: AppSpacing.containerMargin,
-              right: AppSpacing.containerMargin,
-              bottom: AppSpacing.md,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  if (_journey != null && !_following)
-                    FloatingActionButton.extended(
-                      heroTag: null,
-                      onPressed: _recenter,
-                      icon: const Icon(Icons.navigation),
-                      label: const Text(LiveTrackingStrings.recenterOnMe),
-                    )
-                  else
-                    FloatingActionButton.small(
-                      heroTag: null,
-                      tooltip: LiveTrackingStrings.recenter,
-                      onPressed: _recenter,
-                      child: const Icon(Icons.center_focus_strong),
+                    const Text(LiveTrackingStrings.watchMultiple, style: AppTextStyles.bodySm),
+                    Switch(
+                      value: _multi,
+                      onChanged: (on) => setState(() {
+                        _multi = on;
+                        _picked = {...watched};
+                      }),
                     ),
-                  const SizedBox(height: AppSpacing.sm),
-                  if (selected != null)
-                    _FleetFeederCard(feeder: selected, fleet: _fleet)
-                  else if (_journey != null)
-                    _JourneyCard(journey: _journey!)
-                  else
-                    _TripCard(map: _map, onDuty: _fleet.onDutyCount),
-                ],
+                  ],
+                ),
+                TextField(
+                  controller: _routeQuery,
+                  onChanged: (_) => setState(() {}),
+                  textInputAction: TextInputAction.search,
+                  decoration: InputDecoration(
+                    hintText: LiveTrackingStrings.searchRouteHint,
+                    prefixIcon: const Icon(Icons.search, color: AppColors.primary),
+                    suffixIcon: _routeQuery.text.isEmpty
+                        ? null
+                        : IconButton(
+                            tooltip: LiveTrackingStrings.clearRoute,
+                            icon: const Icon(Icons.close),
+                            onPressed: () => setState(_routeQuery.clear),
+                          ),
+                  ),
+                ),
+                const SizedBox(height: AppSpacing.xs),
+                if (_multi)
+                  const Padding(
+                    padding: EdgeInsets.symmetric(vertical: AppSpacing.xs),
+                    child: Text(LiveTrackingStrings.pickRoutesHint, style: AppTextStyles.bodySm),
+                  )
+                else if (watched.isNotEmpty)
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          LiveTrackingStrings.watchingRoutes(
+                              [for (final id in watched) _fleet.corridor(id)?.name ?? id]),
+                          style: AppTextStyles.bodySm.copyWith(color: AppColors.primary),
+                        ),
+                      ),
+                      TextButton(
+                        onPressed: () => _watchRoutes(const {}),
+                        child: const Text(LiveTrackingStrings.showAllRoutes),
+                      ),
+                    ],
+                  ),
+                if (_fleet.loadFailed && _fleet.corridors.isEmpty)
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.refresh),
+                    title: const Text(LiveTrackingStrings.fleetLoadFailed),
+                    onTap: _fleet.load,
+                  )
+                else if (routes.isEmpty)
+                  const Padding(
+                    padding: EdgeInsets.symmetric(vertical: AppSpacing.sm),
+                    child: Text(LiveTrackingStrings.noRouteFound, style: AppTextStyles.bodySm),
+                  ),
+                for (final corridor in routes)
+                  _RouteTile(
+                    corridor: corridor,
+                    onDuty: _fleet.onDutyOn(corridor.id),
+                    multi: _multi,
+                    picked: _picked.contains(corridor.id),
+                    watched: watched.contains(corridor.id),
+                    onTap: _multi
+                        ? () => setState(() {
+                              if (!_picked.remove(corridor.id)) _picked.add(corridor.id);
+                            })
+                        : () => _openRoute(corridor),
+                  ),
+              ],
+            ),
+          ),
+          if (_multi)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(
+                AppSpacing.containerMargin,
+                AppSpacing.xs,
+                AppSpacing.containerMargin,
+                AppSpacing.md,
+              ),
+              child: SizedBox(
+                width: double.infinity,
+                child: FilledButton(
+                  onPressed: _picked.isEmpty ? null : () => _watchRoutes({..._picked}),
+                  child: Text(LiveTrackingStrings.watchRoutes(_picked.length)),
+                ),
               ),
             ),
-          ],
-        );
-      },
+        ],
+      ),
     );
   }
 
@@ -469,126 +655,57 @@ List<Marker> passengerMapMarkers(
   ];
 }
 
-/// Search field filtering the fleet by route (corridor).
-class _RouteSearch extends StatefulWidget {
-  const _RouteSearch({required this.fleet, required this.onSelect});
+/// A route in the sheet: badge, name and feeders on duty. Checkbox in
+/// "Pantau beberapa" mode, else a chevron to its detail page.
+class _RouteTile extends StatelessWidget {
+  const _RouteTile({
+    required this.corridor,
+    required this.onDuty,
+    required this.multi,
+    required this.picked,
+    required this.watched,
+    required this.onTap,
+  });
 
-  final FeederFleetController fleet;
-  final void Function(String? corridorId) onSelect;
-
-  @override
-  State<_RouteSearch> createState() => _RouteSearchState();
-}
-
-class _RouteSearchState extends State<_RouteSearch> {
-  final _text = TextEditingController();
-  final _focus = FocusNode();
-
-  @override
-  void initState() {
-    super.initState();
-    _text.text = widget.fleet.selectedCorridor?.name ?? '';
-    _focus.addListener(() => setState(() {}));
-  }
-
-  @override
-  void dispose() {
-    _text.dispose();
-    _focus.dispose();
-    super.dispose();
-  }
-
-  void _select(String? corridorId) {
-    _text.text = widget.fleet.corridor(corridorId)?.name ?? '';
-    _focus.unfocus();
-    widget.onSelect(corridorId);
-  }
+  final CorridorOption corridor;
+  final int onDuty;
+  final bool multi;
+  final bool picked;
+  final bool watched;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    final fleet = widget.fleet;
-    final filtered = fleet.corridorFilter != null;
-    // While editing, the text is a query; once a route is picked, show all
-    // routes again on focus so switching is one tap.
-    final query = filtered && _text.text == fleet.selectedCorridor?.name
-        ? ''
-        : _text.text;
-    final results = fleet.searchRoutes(query);
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Material(
-          color: AppColors.surfaceContainerLowest,
-          elevation: 3,
-          borderRadius: BorderRadius.circular(AppRadius.md),
-          child: TextField(
-            controller: _text,
-            focusNode: _focus,
-            onChanged: (_) => setState(() {}),
-            textInputAction: TextInputAction.search,
-            onSubmitted: (_) {
-              if (results.length == 1) _select(results.single.id);
-            },
-            decoration: InputDecoration(
-              hintText: LiveTrackingStrings.searchRouteHint,
-              prefixIcon: const Icon(Icons.search, color: AppColors.primary),
-              suffixIcon: filtered || _text.text.isNotEmpty
-                  ? IconButton(
-                      tooltip: LiveTrackingStrings.clearRoute,
-                      icon: const Icon(Icons.close),
-                      onPressed: () => _select(null),
-                    )
-                  : null,
-              filled: false,
-              border: InputBorder.none,
-              enabledBorder: InputBorder.none,
-              focusedBorder: InputBorder.none,
-              contentPadding:
-                  const EdgeInsets.symmetric(vertical: AppSpacing.md),
-            ),
-          ),
-        ),
-        if (_focus.hasFocus)
-          Padding(
-            padding: const EdgeInsets.only(top: AppSpacing.base),
-            child: Material(
-              color: AppColors.surfaceContainerLowest,
-              elevation: 3,
-              borderRadius: BorderRadius.circular(AppRadius.md),
-              clipBehavior: Clip.antiAlias,
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxHeight: 240),
-                child: ListView(
-                  shrinkWrap: true,
-                  padding: EdgeInsets.zero,
-                  children: [
-                    if (query.isEmpty)
-                      ListTile(
-                        leading: const Icon(Icons.layers_outlined),
-                        title: const Text(LiveTrackingStrings.allRoutes),
-                        subtitle: Text(LiveTrackingStrings.routeFeeders(
-                            fleet.onDutyCount)),
-                        selected: !filtered,
-                        onTap: () => _select(null),
-                      ),
-                    for (final corridor in results)
-                      ListTile(
-                        leading: const Icon(Icons.route_outlined),
-                        title: Text(corridor.isDummy ? '${corridor.name} (dummy)' : corridor.name),
-                        subtitle: Text(LiveTrackingStrings.routeFeeders(
-                            fleet.onDutyOn(corridor.id))),
-                        selected: corridor.id == fleet.corridorFilter,
-                        onTap: () => _select(corridor.id),
-                      ),
-                    if (results.isEmpty)
-                      const ListTile(
-                          title: Text(LiveTrackingStrings.noRouteFound)),
-                  ],
-                ),
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(AppRadius.md),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
+        child: Row(
+          children: [
+            RouteBadge(id: corridor.id, size: 36),
+            const SizedBox(width: AppSpacing.sm),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    corridor.isDummy ? '${corridor.name} (dummy)' : corridor.name,
+                    style: AppTextStyles.bodyMd.copyWith(fontWeight: FontWeight.w600, color: AppColors.inverseSurface),
+                  ),
+                  Text(LiveTrackingStrings.routeFeeders(onDuty), style: AppTextStyles.bodySm),
+                ],
               ),
             ),
-          ),
-      ],
+            if (multi)
+              Checkbox(value: picked, onChanged: (_) => onTap())
+            else ...[
+              if (watched) const Icon(Icons.visibility_outlined, size: 18, color: AppColors.primary),
+              const Icon(Icons.chevron_right, color: AppColors.onSurfaceVariant),
+            ],
+          ],
+        ),
+      ),
     );
   }
 }

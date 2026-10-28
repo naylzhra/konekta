@@ -10,12 +10,15 @@ from app.feeders import config
 from app.feeders.device_tokens import verify_token
 from app.feeders.models import (
     AssignedFeeder,
+    CorridorArrivals,
     DevicePositionAccepted,
     DevicePositionReport,
     FeederError,
     FeederErrorCode,
     PositionAccepted,
     PositionReport,
+    StopArrival,
+    StopArrivals,
 )
 from app.feeders.position_store import RedisFeederPositionProvider
 from app.feeders.repository import FeederRepository
@@ -25,6 +28,25 @@ from app.websocket.manager import ConnectionManager
 logger = logging.getLogger(__name__)
 
 _PUBLISHED_FIELDS = {"feeder_id", "lat", "lng", "heading", "occupancy", "capacity", "corridor_id", "direction", "updated_at"}
+
+
+def stop_arrivals(
+    stop_m: Optional[float], feeders: list[FeederPosition], feeder_m: list[Optional[float]], max_eta_s: int
+) -> list[StopArrival]:
+    """Feeders that haven't passed the stop and reach it within [max_eta_s],
+    soonest first. Distances are along the route line."""
+    if stop_m is None:
+        return []
+    arrivals = []
+    for feeder, along in zip(feeders, feeder_m):
+        if along is None or stop_m - along < -config.ARRIVAL_PASSED_TOLERANCE_M:
+            continue
+        eta_s = round(max(stop_m - along, 0) / config.FEEDER_AVG_SPEED_MPS)
+        if eta_s <= max_eta_s:
+            arrivals.append(StopArrival(
+                feeder_id=feeder.feeder_id, eta_s=eta_s, occupancy=feeder.occupancy, capacity=feeder.capacity
+            ))
+    return sorted(arrivals, key=lambda arrival: arrival.eta_s)
 
 
 def in_service_area(lat: float, lng: float) -> bool:
@@ -139,6 +161,29 @@ class FeederTrackingService:
 
     async def live_feeders(self, corridor_id: Optional[str] = None) -> list[FeederPosition]:
         return await self._positions.list_live(corridor_id)
+
+    async def arrivals(self, corridor_id: str, direction: str, max_eta_s: int) -> Optional[CorridorArrivals]:
+        """Per route stop, the on-duty feeders travelling [direction] that
+        reach it within [max_eta_s]. None if the corridor doesn't exist."""
+        feeders = [
+            feeder for feeder in await self._positions.list_live(corridor_id)
+            # Drivers on older app versions report no direction: forward.
+            if (feeder.direction or "forward") == direction
+        ]
+        progress = await self._repository.route_progress(
+            corridor_id, direction, [(feeder.lat, feeder.lng) for feeder in feeders]
+        )
+        if progress is None:
+            return None
+        stops, feeder_m = progress
+        return CorridorArrivals(
+            id=corridor_id,
+            direction=direction,
+            items=[
+                StopArrivals(position=position, name=name, arrivals=stop_arrivals(stop_m, feeders, feeder_m, max_eta_s))
+                for position, name, stop_m in stops
+            ],
+        )
 
     async def go_offline(self, driver_id: UUID) -> None:
         feeder = await self._assigned_for_write(driver_id)

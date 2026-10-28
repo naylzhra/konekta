@@ -53,6 +53,19 @@ class FeederApi {
     ];
   }
 
+  /// Feeders due at each stop of the route within [maxEtaS] (server default 5 min).
+  Future<List<StopArrivals>> arrivals(String corridorId, String token,
+      {RouteDirection direction = RouteDirection.forward, int? maxEtaS}) async {
+    final body = await _request('GET', '/corridors/$corridorId/arrivals', token: token, query: {
+      'direction': direction.wire,
+      if (maxEtaS != null) 'max_eta_s': '$maxEtaS',
+    });
+    return [
+      for (final item in (body as Map<String, dynamic>)['items'] as List<dynamic>)
+        StopArrivals.fromJson(item as Map<String, dynamic>),
+    ];
+  }
+
   /// Every feeder currently on duty; live updates follow on `corridor:<id>`.
   Future<List<FeederPosition>> liveFeeders(String token) async {
     final body = await _request('GET', '/feeders/live', token: token);

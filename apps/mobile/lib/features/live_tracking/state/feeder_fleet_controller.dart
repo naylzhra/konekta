@@ -42,19 +42,22 @@ class FeederFleetController extends ChangeNotifier {
   final Map<String, FeederPosition> _feeders = {};
   final Map<String, DateTime> _heardAt = {};
   bool _loadFailed = false;
-  String? _corridorFilter;
+  Set<String> _corridorFilters = const {};
 
   List<CorridorOption> get corridors => _corridors;
   bool get loadFailed => _loadFailed;
 
-  /// The route (corridor) the map is filtered to; null shows every feeder.
-  String? get corridorFilter => _corridorFilter;
-  CorridorOption? get selectedCorridor => corridor(_corridorFilter);
+  /// Routes (corridors) the map is narrowed to; empty shows every route.
+  Set<String> get corridorFilters => _corridorFilters;
 
-  /// On-duty feeders, narrowed to [corridorFilter] when set.
+  /// The route the map is narrowed to, when it's exactly one.
+  String? get corridorFilter => _corridorFilters.length == 1 ? _corridorFilters.single : null;
+  CorridorOption? get selectedCorridor => corridor(corridorFilter);
+
+  /// On-duty feeders, narrowed to [corridorFilters] when set.
   List<FeederPosition> get feeders => [
         for (final feeder in _feeders.values)
-          if (_corridorFilter == null || corridorIdOf(feeder) == _corridorFilter) feeder,
+          if (_corridorFilters.isEmpty || _corridorFilters.contains(corridorIdOf(feeder))) feeder,
       ];
 
   int get onDutyCount => _feeders.length;
@@ -96,9 +99,12 @@ class FeederFleetController extends ChangeNotifier {
 
   int onDutyOn(String corridorId) => _feeders.values.where((f) => corridorIdOf(f) == corridorId).length;
 
-  void filterByCorridor(String? corridorId) {
-    if (corridorId == _corridorFilter) return;
-    _corridorFilter = corridorId;
+  void filterByCorridor(String? corridorId) => filterByCorridors({if (corridorId != null) corridorId});
+
+  void filterByCorridors(Iterable<String> corridorIds) {
+    final next = Set<String>.unmodifiable(corridorIds.toSet());
+    if (setEquals(next, _corridorFilters)) return;
+    _corridorFilters = next;
     _notify();
   }
 

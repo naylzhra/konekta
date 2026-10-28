@@ -111,6 +111,24 @@ void main() {
     expect(fleet.feeders.length, 2);
   });
 
+  test('watches several routes at once', () async {
+    await fleet.start();
+    positions.corridors['K2']!.add(_position('K2-01', 'K2'));
+    await _settle();
+
+    fleet.filterByCorridors({'K1', 'K2'});
+    expect(fleet.corridorFilters, {'K1', 'K2'});
+    expect(fleet.corridorFilter, isNull); // more than one
+    expect(fleet.feeders.map((f) => f.feederId), ['K1-01', 'K2-01']);
+
+    fleet.filterByCorridors({'K2'});
+    expect(fleet.corridorFilter, 'K2');
+    expect(fleet.feeders.map((f) => f.feederId), ['K2-01']);
+
+    fleet.filterByCorridors(const {});
+    expect(fleet.feeders.length, 2);
+  });
+
   test('drops feeders not heard from for 30 s', () async {
     await fleet.start();
     now = now.add(const Duration(seconds: 20));

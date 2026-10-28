@@ -3,12 +3,14 @@
 from typing import Literal, NoReturn, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 
 from app.auth.dependencies import get_current_session, require_role
+from app.feeders import config
 from app.feeders.dependencies import get_feeder_repository, get_feeder_service
 from app.feeders.models import (
     AssignedFeeder,
+    CorridorArrivals,
     CorridorList,
     CorridorPath,
     CorridorStops,
@@ -62,6 +64,21 @@ async def corridor_path(
     if path is None:
         raise HTTPException(status_code=404, detail="Corridor not found")
     return path
+
+
+# Upcoming feeders per route stop, for the passenger's route page.
+@router.get("/corridors/{corridor_id}/arrivals", response_model=CorridorArrivals)
+async def corridor_arrivals(
+    corridor_id: str,
+    direction: Literal["forward", "backward"] = "forward",
+    max_eta_s: int = Query(config.ARRIVALS_DEFAULT_MAX_ETA_S, ge=0, le=config.ARRIVALS_MAX_ETA_S),
+    _session: dict = Depends(get_current_session),
+    service: FeederTrackingService = Depends(get_feeder_service),
+) -> CorridorArrivals:
+    arrivals = await service.arrivals(corridor_id, direction, max_eta_s)
+    if arrivals is None:
+        raise HTTPException(status_code=404, detail="Corridor not found")
+    return arrivals
 
 
 # Snapshot for the passenger map; live updates follow on corridor:<id> topics.

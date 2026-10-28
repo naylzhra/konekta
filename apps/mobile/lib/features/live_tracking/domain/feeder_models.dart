@@ -83,13 +83,23 @@ class CorridorRouteStop {
 }
 
 class CorridorRoute {
-  const CorridorRoute(
-      {required this.id, required this.name, required this.stops, this.isDummy = false});
+  const CorridorRoute({
+    required this.id,
+    required this.name,
+    required this.stops,
+    this.isDummy = false,
+    this.operatingHours,
+    this.operatingDays,
+    this.fareFromIdr,
+  });
 
   factory CorridorRoute.fromJson(Map<String, dynamic> json) => CorridorRoute(
         id: json['id'] as String,
         name: json['name'] as String,
         isDummy: json['is_dummy'] as bool? ?? false,
+        operatingHours: json['operating_hours'] as String?,
+        operatingDays: json['operating_days'] as String?,
+        fareFromIdr: json['fare_from_idr'] as int?,
         stops: [
           for (final item in json['items'] as List<dynamic>)
             CorridorRouteStop.fromJson(item as Map<String, dynamic>),
@@ -100,6 +110,48 @@ class CorridorRoute {
   final String name;
   final bool isDummy;
   final List<CorridorRouteStop> stops;
+
+  /// Service info for the route page; null until set on the server.
+  final String? operatingHours;
+  final String? operatingDays;
+  final int? fareFromIdr;
+}
+
+/// A feeder due at a route stop (`GET /corridors/{id}/arrivals`).
+class StopArrival {
+  const StopArrival({required this.feederId, required this.etaS, required this.occupancy, required this.capacity});
+
+  factory StopArrival.fromJson(Map<String, dynamic> json) => StopArrival(
+        feederId: json['feeder_id'] as String,
+        etaS: json['eta_s'] as int,
+        occupancy: json['occupancy'] as int,
+        capacity: json['capacity'] as int,
+      );
+
+  final String feederId;
+
+  /// Server estimate from the distance left along the route.
+  final int etaS;
+  final int occupancy;
+  final int capacity;
+}
+
+/// Feeders due at one route stop, soonest first.
+class StopArrivals {
+  const StopArrivals({required this.position, required this.name, required this.arrivals});
+
+  factory StopArrivals.fromJson(Map<String, dynamic> json) => StopArrivals(
+        position: json['position'] as int,
+        name: json['name'] as String,
+        arrivals: [
+          for (final item in json['arrivals'] as List<dynamic>)
+            StopArrival.fromJson(item as Map<String, dynamic>),
+        ],
+      );
+
+  final int position;
+  final String name;
+  final List<StopArrival> arrivals;
 }
 
 class AssignedFeeder {
