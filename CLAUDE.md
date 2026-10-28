@@ -32,6 +32,7 @@ services/
 
 infra/
   docker/        docker-compose.yml for local dev
+  render/        Render deploy guide + remote migration runner (blueprint: /render.yaml)
   railway/       deploy config (placeholder)
   db/            Postgres/PostGIS migrations + seed data
 

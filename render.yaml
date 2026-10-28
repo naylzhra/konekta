@@ -1,0 +1,112 @@
+# Render Blueprint: backend + database only (the mobile app and dashboard
+# aren't deployed). Setup steps: infra/render/README.md.
+#
+# Free web services can't *receive* private-network traffic, so services
+# call each other over their public onrender.com URLs. If Render gives a
+# service a different URL than the one below (name already taken), update
+# the matching *_URL value.
+
+services:
+  - type: web
+    name: konekta-gateway
+    runtime: docker
+    plan: free
+    region: singapore
+    dockerfilePath: ./services/gateway/Dockerfile
+    dockerContext: ./services/gateway
+    healthCheckPath: /health
+    buildFilter:
+      paths: ["services/gateway/**"]
+    envVars:
+      - key: PORT
+        value: "8000"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: konekta-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: konekta-redis
+          property: connectionString
+      - key: OSRM_BASE_URL
+        value: https://konekta-osrm-mock.onrender.com
+      - key: POOLING_URL
+        value: https://konekta-pooling.onrender.com
+      - key: STOP_OPTIMIZATION_URL
+        value: https://konekta-stop-optimization.onrender.com
+      - key: ROUTING_DATA_READY
+        value: "0"
+      - key: STOP_ASSIGNER
+        value: db
+      - key: FEEDER_PROVIDER
+        value: redis
+      - key: VIRTUAL_STOP_AUTO_RUN
+        value: "1"
+      - key: STUB_FEEDER_SUPPLY
+        value: "1"
+      - key: BOOKING_SIMULATOR
+        value: "0"
+      - key: CORS_ORIGINS
+        value: http://localhost:5173
+
+  - type: web
+    name: konekta-pooling
+    runtime: docker
+    plan: free
+    region: singapore
+    dockerfilePath: ./services/pooling-service/Dockerfile
+    dockerContext: ./services/pooling-service
+    healthCheckPath: /health
+    buildFilter:
+      paths: ["services/pooling-service/**"]
+    envVars:
+      - key: PORT
+        value: "8000"
+      - key: OSRM_BASE_URL
+        value: https://konekta-osrm-mock.onrender.com
+
+  - type: web
+    name: konekta-stop-optimization
+    runtime: docker
+    plan: free
+    region: singapore
+    dockerfilePath: ./services/stop-optimization-service/Dockerfile
+    dockerContext: ./services/stop-optimization-service
+    healthCheckPath: /health
+    buildFilter:
+      paths: ["services/stop-optimization-service/**"]
+    envVars:
+      - key: PORT
+        value: "8000"
+      - key: OSRM_BASE_URL
+        value: https://konekta-osrm-mock.onrender.com
+
+  # TODO(bandung-map-data): temporary stand-in for a real OSRM instance.
+  - type: web
+    name: konekta-osrm-mock
+    runtime: docker
+    plan: free
+    region: singapore
+    dockerfilePath: ./services/osrm-mock/Dockerfile
+    dockerContext: ./services/osrm-mock
+    healthCheckPath: /health
+    buildFilter:
+      paths: ["services/osrm-mock/**"]
+    envVars:
+      - key: PORT
+        value: "8000"
+
+  - type: keyvalue
+    name: konekta-redis
+    plan: free
+    region: singapore
+    ipAllowList: []  # internal connections only
+
+databases:
+  - name: konekta-db
+    plan: free
+    region: singapore
+    databaseName: konekta
+    user: konekta
+    postgresMajorVersion: "16"
