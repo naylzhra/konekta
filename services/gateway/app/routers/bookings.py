@@ -23,7 +23,10 @@ router = APIRouter(tags=["bookings"])
 
 def raise_http(exc: Exception) -> None:
     if isinstance(exc, BookingError):
-        raise HTTPException(exc.status_code, detail={"code": exc.code.value, "message": exc.message}) from exc
+        detail = {"code": exc.code.value, "message": exc.message}
+        if exc.nearest_stop is not None:
+            detail["nearest_stop"] = exc.nearest_stop.model_dump(mode="json")
+        raise HTTPException(exc.status_code, detail=detail) from exc
     if isinstance(exc, InvalidTransition):
         raise HTTPException(
             status.HTTP_409_CONFLICT, detail={"code": ErrorCode.INVALID_TRANSITION.value, "message": str(exc)}

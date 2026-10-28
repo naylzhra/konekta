@@ -110,6 +110,16 @@ class ApiBookingRepository implements BookingRepository {
     }
   }
 
+  /// A malformed hint is dropped rather than hiding the error it came with.
+  static NearestStopHint? _nearestStop(Object? json) {
+    if (json is! Map<String, dynamic>) return null;
+    try {
+      return NearestStopHint.fromJson(json);
+    } on Object {
+      return null;
+    }
+  }
+
   static BookingException _failureFor(ApiResponse response) {
     final status = response.statusCode;
     final detail = response.body is Map<String, dynamic> ? (response.body as Map<String, dynamic>)['detail'] : null;
@@ -118,6 +128,7 @@ class ApiBookingRepository implements BookingRepository {
         BookingFailureCode.fromWire(detail['code'] as String),
         statusCode: status,
         debugMessage: detail['message'] as String?,
+        nearestStop: _nearestStop(detail['nearest_stop']),
       );
     }
     final code = switch (status) {

@@ -46,6 +46,14 @@ void main() {
     await tester.pump(const Duration(milliseconds: 500)); // route transition
   }
 
+  // Focusing the destination field opens the suggestions; picking one plans the trip.
+  Future<void> pickDestination(WidgetTester tester) async {
+    await tester.tap(find.byType(TextField));
+    await tester.pump();
+    await tester.tap(find.text(StubTripLocations.places.first.name));
+    await tester.pump();
+  }
+
   // Disposes widgets so timers (plan expiry) don't outlive the test.
   Future<void> unmount(WidgetTester tester) => tester.pumpWidget(const SizedBox());
 
@@ -61,7 +69,7 @@ void main() {
 
       expect(repo.consents.single.granted, isTrue);
       expect(find.text(BookingStrings.consentTitle), findsNothing);
-      expect(find.text(StubTripLocations.places.first.name), findsOneWidget);
+      expect(find.text(BookingStrings.destinationHint), findsOneWidget);
       await unmount(tester);
     });
 
@@ -73,10 +81,7 @@ void main() {
       await pumpHome(tester);
       await openPlanner(tester);
 
-      await tester.tap(find.text(StubTripLocations.places.first.name));
-      await tester.pump();
-      await tester.tap(find.text(BookingStrings.confirmDestination));
-      await tester.pump();
+      await pickDestination(tester);
       expect(find.text(BookingStrings.planTitle), findsOneWidget);
       expect(find.text(BookingStrings.rupiah(5000)), findsOneWidget);
 
@@ -110,10 +115,7 @@ void main() {
       await pumpHome(tester);
       await openPlanner(tester);
 
-      await tester.tap(find.text(StubTripLocations.places.first.name));
-      await tester.pump();
-      await tester.tap(find.text(BookingStrings.confirmDestination));
-      await tester.pump();
+      await pickDestination(tester);
       expect(find.text(BookingStrings.planTitle), findsOneWidget);
       expect(find.text(BookingStrings.routeDetails), findsNWidgets(2));
 
@@ -133,10 +135,7 @@ void main() {
       await pumpHome(tester);
       await openPlanner(tester);
 
-      await tester.tap(find.text(StubTripLocations.places.first.name));
-      await tester.pump();
-      await tester.tap(find.text(BookingStrings.confirmDestination));
-      await tester.pump();
+      await pickDestination(tester);
       final ride = BookingStrings.rideLeg(BookingStrings.minutes(10), BookingStrings.distance(3000));
       expect(find.text(ride), findsNothing);
 
@@ -157,17 +156,31 @@ void main() {
       await pumpHome(tester);
       await openPlanner(tester);
 
-      await tester.tap(find.text(StubTripLocations.places.first.name));
-      await tester.pump();
-      await tester.tap(find.text(BookingStrings.confirmDestination));
-      await tester.pump();
+      await pickDestination(tester);
       expect(find.text(BookingStrings.planTitle), findsOneWidget);
 
       await tester.binding.handlePopRoute();
       await tester.pump();
       expect(find.text(BookingStrings.planTitle), findsNothing);
-      expect(find.text(BookingStrings.confirmDestination), findsOneWidget);
+      expect(find.byType(TextField), findsOneWidget);
       expect(controller.plans, isEmpty);
+      await unmount(tester);
+    });
+
+    testWidgets('suggestions show only while searching; back closes them first', (tester) async {
+      await repo.recordConsent(granted: true);
+      await pumpHome(tester);
+      await openPlanner(tester);
+      expect(find.text(StubTripLocations.places.first.name), findsNothing);
+
+      await tester.tap(find.byType(TextField));
+      await tester.pump();
+      expect(find.text(StubTripLocations.places.first.name), findsOneWidget);
+
+      await tester.binding.handlePopRoute();
+      await tester.pump();
+      expect(find.text(StubTripLocations.places.first.name), findsNothing);
+      expect(find.text(BookingStrings.plannerTitle), findsOneWidget); // still on the planner
       await unmount(tester);
     });
 
@@ -177,13 +190,40 @@ void main() {
       await pumpHome(tester);
       await openPlanner(tester);
 
-      await tester.tap(find.text(StubTripLocations.places.first.name));
-      await tester.pump();
-      await tester.tap(find.text(BookingStrings.confirmDestination));
-      await tester.pump();
+      await pickDestination(tester);
 
       expect(find.text(BookingStrings.failure(BookingFailureCode.noRoute)), findsOneWidget);
       expect(find.text(BookingStrings.retry), findsNothing);
+      await unmount(tester);
+    });
+
+    testWidgets('no route suggests the nearest stop', (tester) async {
+      await repo.recordConsent(granted: true);
+      repo.onPlan = () async => throw const BookingException(
+            BookingFailureCode.noRoute,
+            nearestStop: NearestStopHint(
+              stop: Stop(
+                id: 's1',
+                type: StopType.staticStop,
+                name: 'Halte Dago',
+                location: GeoPoint(lat: -6.89, lng: 107.61),
+              ),
+              walkDistanceM: 640,
+              walkDurationS: 480,
+            ),
+          );
+      await pumpHome(tester);
+      await openPlanner(tester);
+
+      await pickDestination(tester);
+
+      expect(find.text(BookingStrings.failure(BookingFailureCode.noRoute)), findsOneWidget);
+      expect(find.text(BookingStrings.nearestStopTitle), findsOneWidget);
+      expect(find.text('Halte Dago'), findsOneWidget);
+      expect(
+        find.text(BookingStrings.nearestStopWalk(BookingStrings.durationFromSeconds(480), BookingStrings.distance(640))),
+        findsOneWidget,
+      );
       await unmount(tester);
     });
 

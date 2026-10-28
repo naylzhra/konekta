@@ -34,6 +34,7 @@ from app.bookings.models import (
     ErrorCode,
     GeoPoint,
     LegMode,
+    NearestStopHint,
     Stop,
     TripLeg,
     TripPlan,
@@ -59,11 +60,14 @@ def utcnow() -> datetime:
 
 
 class BookingError(Exception):
-    def __init__(self, code: ErrorCode, status_code: int, message: str) -> None:
+    def __init__(
+        self, code: ErrorCode, status_code: int, message: str, *, nearest_stop: Optional[NearestStopHint] = None
+    ) -> None:
         super().__init__(message)
         self.code = code
         self.status_code = status_code
         self.message = message
+        self.nearest_stop = nearest_stop
 
 
 def compute_fare_idr(feeder_distance_m: float) -> int:
@@ -136,6 +140,18 @@ class BookingService:
         except RoutingError as exc:
             raise BookingError(ErrorCode.ROUTING_UNAVAILABLE, 503, "Routing is unavailable") from exc
 
+    async def _no_route(self, origin: GeoPoint, message: str) -> BookingError:
+        """NO_ROUTE, suggesting the closest boardable stop to [origin] if one is near enough."""
+        stop = await self._stops.nearest_stop(origin, config.NEAREST_STOP_HINT_MAX_M)
+        hint: Optional[NearestStopHint] = None
+        if stop is not None:
+            try:
+                walk = await self._routing.route([origin, stop.location], profile="walking")
+                hint = NearestStopHint(stop=stop, walk_distance_m=walk.distance_m, walk_duration_s=walk.duration_s)
+            except RoutingError:
+                hint = NearestStopHint(stop=stop, walk_distance_m=haversine_m(origin, stop.location))
+        return BookingError(ErrorCode.NO_ROUTE, 422, message, nearest_stop=hint)
+
     async def plan_trip(self, user_id: UUID, request: TripPlanRequest) -> TripPlansResponse:
         await self._require_consent(user_id)
 
@@ -145,7 +161,7 @@ class BookingService:
 
         match = await self._stops.match_corridor(request.origin, request.destination)
         if match is None:
-            raise BookingError(ErrorCode.NO_ROUTE, 422, "No feeder corridor serves both points")
+            raise await self._no_route(request.origin, "No feeder corridor serves both points")
 
         pickup = await self._stops.assign_pickup_stop(
             StopAssignmentRequest(location=request.origin, seats=request.seats,
@@ -156,7 +172,7 @@ class BookingService:
                                   corridor_id=match.corridor_id, direction=match.direction)
         )
         if pickup is None or dropoff is None:
-            raise BookingError(ErrorCode.NO_ROUTE, 422, "Outside the service area")
+            raise await self._no_route(request.origin, "No stop within walking distance")
         if pickup.id == dropoff.id:
             raise BookingError(ErrorCode.NO_ROUTE, 422, "Destination is too close to need a feeder")
 

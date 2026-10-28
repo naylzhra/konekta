@@ -5,6 +5,7 @@ import httpx
 import pytest
 
 from app.bookings import config
+from app.bookings.clients import STUB_STOPS
 from app.bookings.models import CreateBookingRequest
 from tests.conftest import PASSENGER_ID, auth
 
@@ -120,6 +121,21 @@ async def test_plan_too_short_is_no_route(client):
     response = await client.post("/trip-plans", json={"origin": ORIGIN, "destination": ORIGIN}, headers=auth(P1))
     assert response.status_code == 422
     assert response.json()["detail"]["code"] == "no_route"
+
+
+async def test_plan_without_a_corridor_suggests_the_nearest_stop(client, service, monkeypatch):
+    await give_consent(client)
+
+    async def no_corridor(origin, destination):
+        return None
+
+    monkeypatch.setattr(service._stops, "match_corridor", no_corridor)
+    response = await client.post("/trip-plans", json={"origin": ORIGIN, "destination": DESTINATION}, headers=auth(P1))
+    assert response.status_code == 422
+    detail = response.json()["detail"]
+    assert detail["code"] == "no_route"
+    assert detail["nearest_stop"]["stop"]["name"] == STUB_STOPS[0].name
+    assert detail["nearest_stop"]["walk_duration_s"] is not None
 
 
 async def test_plan_routing_down_is_503(client, routing):

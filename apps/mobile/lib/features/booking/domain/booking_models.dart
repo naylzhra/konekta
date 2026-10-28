@@ -60,6 +60,23 @@ class Stop {
   final DateTime? validUntil;
 }
 
+/// Closest boardable stop to the origin, sent with a no_route error.
+class NearestStopHint {
+  const NearestStopHint({required this.stop, required this.walkDistanceM, this.walkDurationS});
+
+  factory NearestStopHint.fromJson(Map<String, dynamic> json) => NearestStopHint(
+        stop: Stop.fromJson(json['stop'] as Map<String, dynamic>),
+        walkDistanceM: (json['walk_distance_m'] as num).toDouble(),
+        walkDurationS: (json['walk_duration_s'] as num?)?.toDouble(),
+      );
+
+  final Stop stop;
+  final double walkDistanceM;
+
+  /// Null when the server couldn't route the walk; [walkDistanceM] is then straight-line.
+  final double? walkDurationS;
+}
+
 /// Stop as it was when the booking was confirmed; never rewritten.
 class StopSnapshot {
   const StopSnapshot({this.id, required this.type, required this.name, required this.location});

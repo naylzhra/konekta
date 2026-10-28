@@ -248,29 +248,33 @@ class _TripPlannerState extends State<_TripPlanner> {
   final _plannerMapController = MapController();
   bool _plannerMapReady = false;
   final _query = TextEditingController();
+  final _queryFocus = FocusNode();
   GeoPoint? _origin;
   bool _loadingOrigin = true;
-  bool _originIsGps = true;
-  bool _choosingOrigin = false;
   String? _locationMessage;
 
-  /// The searched place. It is the destination, or the origin when [_swapped]
-  /// (then the trip ends at the current location).
+  /// The searched place: the destination. The origin is always [_origin].
   TripPlace? _place;
-  bool _swapped = false;
   List<TripPlace> _suggestions = const [];
   int _searchRequest = 0;
 
   @override
   void initState() {
     super.initState();
+    // The suggestion list is shown while the destination field has focus.
+    _queryFocus.addListener(() {
+      if (mounted) setState(() {});
+    });
+    widget.controller.addListener(_showNearestStop);
     _loadOrigin();
     _search('');
   }
 
   @override
   void dispose() {
+    widget.controller.removeListener(_showNearestStop);
     _query.dispose();
+    _queryFocus.dispose();
     _plannerMapController.dispose();
     super.dispose();
   }
@@ -286,16 +290,39 @@ class _TripPlannerState extends State<_TripPlanner> {
     if (!mounted) return;
     setState(() {
       _origin = origin;
-      _originIsGps = true;
       _loadingOrigin = false;
-      _locationMessage = origin != null && !ServiceArea.contains(origin.lat, origin.lng)
-          ? 'Lokasimu di luar area layanan Bandung. Pilih titik asal di peta.'
-          : null;
+      _locationMessage = _originOutsideMessage;
     });
     if (_plannerMapReady && origin != null && ServiceArea.contains(origin.lat, origin.lng)) {
       _plannerMapController.move(LatLng(origin.lat, origin.lng), 15);
     }
+    // A destination picked while the location was loading is planned now.
+    if (_place != null && widget.controller.planning == PlanningStatus.idle) _plan();
   }
+
+  NearestStopHint? get _nearestStopHint =>
+      widget.controller.planning == PlanningStatus.failed ? widget.controller.planError?.nearestStop : null;
+  NearestStopHint? _framedHint;
+
+  /// When no route exists, frame the origin and the suggested stop.
+  void _showNearestStop() {
+    final hint = _nearestStopHint;
+    if (identical(hint, _framedHint)) return;
+    _framedHint = hint;
+    final origin = _origin;
+    if (hint == null || origin == null || !_plannerMapReady) return;
+    _plannerMapController.fitCamera(CameraFit.coordinates(
+      coordinates: [LatLng(origin.lat, origin.lng), LatLng(hint.stop.location.lat, hint.stop.location.lng)],
+      // Clear of the endpoints card above and the error sheet below.
+      padding: const EdgeInsets.fromLTRB(48, 140, 48, 280),
+      maxZoom: 16,
+    ));
+  }
+
+  /// The origin is always the GPS location; outside Bandung no trip can be planned.
+  String? get _originOutsideMessage => _origin != null && !ServiceArea.contains(_origin!.lat, _origin!.lng)
+      ? 'Lokasimu di luar area layanan Bandung.'
+      : null;
 
   Future<void> _search(String query) async {
     final request = ++_searchRequest;
@@ -318,52 +345,25 @@ class _TripPlannerState extends State<_TripPlanner> {
     _search(query);
   }
 
+  /// Picking a destination fills the field and goes straight to route options.
   void _select(TripPlace place) {
-    FocusScope.of(context).unfocus();
+    _queryFocus.unfocus();
     widget.controller.clearPlans();
-    if (_choosingOrigin) {
-      setState(() {
-        _origin = place.location;
-        _originIsGps = false;
-        _choosingOrigin = false;
-        _locationMessage = null;
-      });
-      _query.clear();
-      _search('');
-      if (_plannerMapReady) _plannerMapController.move(LatLng(place.location.lat, place.location.lng), 15);
-    } else {
-      _query.text = place.name;
-      setState(() => _place = place);
-    }
+    _query.text = place.name;
+    setState(() {
+      _place = place;
+      _locationMessage = _originOutsideMessage;
+    });
+    _plan();
   }
 
   void _selectOnMap(LatLng point) {
-    widget.controller.clearPlans();
     final selected = GeoPoint(lat: point.latitude, lng: point.longitude);
     if (!ServiceArea.contains(selected.lat, selected.lng)) {
       setState(() => _locationMessage = 'Titik berada di luar area layanan Bandung.');
       return;
     }
-    setState(() {
-      _locationMessage = null;
-      if (_choosingOrigin) {
-        _origin = selected;
-        _originIsGps = false;
-        _choosingOrigin = false;
-      } else {
-        _place = TripPlace(id: 'map', name: 'Titik pada peta', location: selected);
-        _query.text = _place!.name;
-      }
-    });
-    if (_choosingOrigin == false && _place == null) {
-      _query.clear();
-      _search('');
-    }
-  }
-
-  void _swap() {
-    widget.controller.clearPlans();
-    setState(() => _swapped = !_swapped);
+    _select(TripPlace(id: 'map', name: 'Titik pada peta', location: selected));
   }
 
   void _plan() {
@@ -378,8 +378,8 @@ class _TripPlannerState extends State<_TripPlanner> {
     widget.controller.clearActionError();
     unawaited(
       widget.controller.planTrip(
-        origin: _swapped ? place.location : here,
-        destination: _swapped ? here : place.location,
+        origin: here,
+        destination: place.location,
       ),
     );
   }
@@ -389,50 +389,31 @@ class _TripPlannerState extends State<_TripPlanner> {
     color: AppColors.inverseSurface,
   );
 
-  Widget _selectionSheet(bool canPlan) {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.stretch,
+  /// Full-height suggestions under the endpoints card, while the field has focus.
+  Widget _suggestionList() {
+    return ListView(
+      padding: EdgeInsets.fromLTRB(
+        AppSpacing.containerMargin - AppSpacing.base,
+        AppSpacing.xs,
+        AppSpacing.containerMargin - AppSpacing.base,
+        AppSpacing.md + MediaQuery.paddingOf(context).bottom,
+      ),
       children: [
-        Text(_choosingOrigin ? (_swapped ? 'Pilih titik tujuan' : 'Pilih titik asal') : BookingStrings.suggestedPlaces,
-          style: _sheetTitleStyle),
-        if (_locationMessage != null) ...[
-          const SizedBox(height: AppSpacing.xs),
-          Text(_locationMessage!, style: AppTextStyles.bodySm.copyWith(color: AppColors.error)),
-        ],
-        const Text('Ketuk peta untuk memilih titik, atau pilih halte di bawah.', style: AppTextStyles.bodySm),
-        const SizedBox(height: AppSpacing.xs),
-        Flexible(
-          child: _suggestions.isEmpty
-              ? const Padding(
-                  padding: EdgeInsets.symmetric(vertical: AppSpacing.sm),
-                  child: Text(BookingStrings.noDestinationMatch, style: AppTextStyles.bodySm),
-                )
-              : ListView(
-                  shrinkWrap: true,
-                  padding: EdgeInsets.zero,
-                  children: [
-                    for (final place in _suggestions)
-                      _PlaceTile(place: place, selected: place.id == _place?.id, onTap: () => _select(place)),
-                  ],
-                ),
+        const Padding(
+          padding: EdgeInsets.symmetric(horizontal: AppSpacing.base, vertical: AppSpacing.xs),
+          child: Text(BookingStrings.suggestedPlaces, style: AppTextStyles.labelMd),
         ),
-        if (widget.locations.isPlaceholder) ...[
-          const SizedBox(height: AppSpacing.xs),
-          const Text(BookingStrings.placeholderLocations, style: AppTextStyles.labelMd),
-        ],
-        const SizedBox(height: AppSpacing.md),
-        ElevatedButton(
-          onPressed: canPlan ? _plan : null,
-          child: const Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(BookingStrings.confirmDestination),
-              SizedBox(width: AppSpacing.xs),
-              Icon(Icons.arrow_forward, size: 20),
-            ],
+        if (_suggestions.isEmpty)
+          const Padding(
+            padding: EdgeInsets.all(AppSpacing.base),
+            child: Text(BookingStrings.noDestinationMatch, style: AppTextStyles.bodySm),
           ),
-        ),
+        for (final place in _suggestions) _PlaceTile(place: place, onTap: () => _select(place)),
+        if (widget.locations.isPlaceholder)
+          const Padding(
+            padding: EdgeInsets.all(AppSpacing.base),
+            child: Text(BookingStrings.placeholderLocations, style: AppTextStyles.labelMd),
+          ),
       ],
     );
   }
@@ -448,70 +429,54 @@ class _TripPlannerState extends State<_TripPlanner> {
     final currentLocation = _OriginRow(
       loading: _loadingOrigin,
       available: _origin != null,
-      label: _originIsGps ? BookingStrings.currentLocation : (_swapped ? 'Titik tujuan dipilih' : 'Titik asal dipilih'),
+      label: BookingStrings.currentLocation,
       onRetry: _loadOrigin,
     );
     final placeField = TextField(
       controller: _query,
+      focusNode: _queryFocus,
       onChanged: _onQueryChanged,
       textInputAction: TextInputAction.search,
       style: _EndpointRow.valueStyle,
       decoration: InputDecoration(
         isCollapsed: true,
+        // Explicit, or the app theme's padding makes this row taller than the origin row.
+        contentPadding: EdgeInsets.zero,
         filled: false,
         border: InputBorder.none,
         enabledBorder: InputBorder.none,
         focusedBorder: InputBorder.none,
-        hintText: _swapped ? BookingStrings.originHint : BookingStrings.destinationHint,
+        hintText: BookingStrings.destinationHint,
         hintStyle: _EndpointRow.valueStyle.copyWith(color: AppColors.outline, fontWeight: FontWeight.w500),
       ),
     );
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(
-            AppSpacing.containerMargin,
-            AppSpacing.xs,
-            AppSpacing.containerMargin,
-            AppSpacing.md,
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              _EndpointsCard(
-                origin: _swapped ? placeField : currentLocation,
-                destination: _swapped ? currentLocation : placeField,
-                onSwap: _swap,
-              ),
-              TextButton.icon(
-                onPressed: () => setState(() => _choosingOrigin = !_choosingOrigin),
-                icon: const Icon(Icons.place_outlined),
-                label: Text(_choosingOrigin ? 'Batal memilih titik' :
-                    (_swapped ? 'Pilih titik tujuan di peta' : 'Pilih titik asal di peta')),
-              ),
-            ],
-          ),
-        ),
-        Expanded(
-          child: controller.planning == PlanningStatus.idle
-              ? _selectionMap(canPlan)
-              : _RouteOptions(
-                  controller: controller,
-                  onReplan: canPlan ? _plan : null,
-                  originLabel: _swapped ? _place?.name ?? BookingStrings.origin : BookingStrings.currentLocation,
-                  destinationLabel:
-                      _swapped ? BookingStrings.currentLocation : _place?.name ?? BookingStrings.destination,
-                ),
-        ),
-      ],
+    final idle = controller.planning == PlanningStatus.idle;
+    final searching = _queryFocus.hasFocus;
+    final hint = _nearestStopHint;
+    final routeSheet = Material(
+      color: AppColors.surfaceContainerLowest,
+      elevation: 8,
+      shadowColor: const Color(0x33000000),
+      borderRadius: const BorderRadius.vertical(top: Radius.circular(AppRadius.xl)),
+      clipBehavior: Clip.antiAlias,
+      child: _RouteOptions(
+        controller: controller,
+        onReplan: canPlan ? _plan : null,
+        originLabel: BookingStrings.currentLocation,
+        destinationLabel: _place?.name ?? BookingStrings.destination,
+      ),
     );
-  }
 
-  Widget _selectionMap(bool canPlan) {
-    return LayoutBuilder(
-      builder: (context, constraints) => Stack(
+    // The map fills the page; the endpoints card and the route sheet float
+    // over it. While searching, the suggestion list covers the map.
+    return PopScope(
+      // Back closes the suggestion list before leaving the page.
+      canPop: !searching,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) _queryFocus.unfocus();
+      },
+      child: Stack(
         children: [
           Positioned.fill(
             child: ServiceAreaMap(
@@ -520,7 +485,8 @@ class _TripPlannerState extends State<_TripPlanner> {
               initialCenter: _origin != null && ServiceArea.contains(_origin!.lat, _origin!.lng)
                   ? LatLng(_origin!.lat, _origin!.lng)
                   : ServiceArea.center,
-              onMapTap: _selectOnMap,
+              // Picking on the map only applies while choosing the destination.
+              onMapTap: idle ? _selectOnMap : null,
               markers: [
                 if (_origin != null && ServiceArea.contains(_origin!.lat, _origin!.lng))
                   Marker(point: LatLng(_origin!.lat, _origin!.lng), width: 40, height: 40,
@@ -528,53 +494,101 @@ class _TripPlannerState extends State<_TripPlanner> {
                 if (_place != null)
                   Marker(point: LatLng(_place!.location.lat, _place!.location.lng), width: 44, height: 44,
                     child: const Icon(Icons.location_on, color: AppColors.secondary, size: 40)),
+                if (hint != null)
+                  Marker(point: LatLng(hint.stop.location.lat, hint.stop.location.lng), width: 36, height: 36,
+                    child: const _StopMarker()),
               ],
             ),
           ),
-          Align(
-            alignment: Alignment.bottomCenter,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                Padding(
-                  padding: const EdgeInsets.only(right: AppSpacing.md, bottom: AppSpacing.md),
-                  child: Material(
-                    color: Colors.white,
-                    shape: const CircleBorder(),
-                    elevation: 3,
-                    child: IconButton(
-                      tooltip: BookingStrings.locate,
-                      onPressed: _loadingOrigin ? null : _loadOrigin,
-                      icon: const Icon(Icons.my_location, color: AppColors.inverseSurface),
-                    ),
-                  ),
+          if (searching) const Positioned.fill(child: ColoredBox(color: AppColors.surfaceContainerLowest)),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(
+                  AppSpacing.containerMargin,
+                  AppSpacing.xs,
+                  AppSpacing.containerMargin,
+                  AppSpacing.xs,
                 ),
-                ConstrainedBox(
-                  constraints: BoxConstraints(maxHeight: constraints.maxHeight * 0.75),
-                  child: _PlannerSheet(child: _selectionSheet(canPlan)),
+                child: _EndpointsCard(
+                  origin: currentLocation,
+                  destination: placeField,
                 ),
-              ],
-            ),
+              ),
+              Expanded(
+                child: searching
+                    ? _suggestionList()
+                    : idle
+                    ? _mapControls()
+                    // A failed plan keeps the map (and any suggested stop) in view.
+                    : controller.planning == PlanningStatus.failed
+                    ? Align(alignment: Alignment.bottomCenter, child: routeSheet)
+                    : routeSheet,
+              ),
+            ],
           ),
         ],
       ),
     );
   }
+
+  /// Location message and locate button, over the map below the endpoints card.
+  Widget _mapControls() {
+    return Stack(
+      children: [
+        if (_locationMessage != null)
+          Align(
+            alignment: Alignment.topCenter,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: AppSpacing.containerMargin),
+              child: Material(
+                color: AppColors.surfaceContainerLowest,
+                elevation: 2,
+                shadowColor: const Color(0x33000000),
+                borderRadius: BorderRadius.circular(AppRadius.lg),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md, vertical: AppSpacing.xs),
+                  child: Text(_locationMessage!, style: AppTextStyles.bodySm.copyWith(color: AppColors.error)),
+                ),
+              ),
+            ),
+          ),
+        Align(
+          alignment: Alignment.bottomRight,
+          child: Padding(
+            padding: EdgeInsets.only(
+              right: AppSpacing.md,
+              bottom: AppSpacing.md + MediaQuery.paddingOf(context).bottom,
+            ),
+            child: Material(
+              color: Colors.white,
+              shape: const CircleBorder(),
+              elevation: 3,
+              child: IconButton(
+                tooltip: BookingStrings.locate,
+                onPressed: _loadingOrigin ? null : _loadOrigin,
+                icon: const Icon(Icons.my_location, color: AppColors.inverseSurface),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
 }
 
-/// Origin/destination card with the swap button.
+/// Origin/destination card.
 class _EndpointsCard extends StatelessWidget {
-  const _EndpointsCard({required this.origin, required this.destination, required this.onSwap});
+  const _EndpointsCard({required this.origin, required this.destination});
 
   final Widget origin;
   final Widget destination;
-  final VoidCallback onSwap;
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.fromLTRB(AppSpacing.md, AppSpacing.base, AppSpacing.base, AppSpacing.base),
+      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md, vertical: AppSpacing.base),
       decoration: BoxDecoration(
         color: AppColors.surfaceContainerLowest,
         borderRadius: BorderRadius.circular(AppRadius.xl),
@@ -584,42 +598,31 @@ class _EndpointsCard extends StatelessWidget {
               color: AppColors.inverseSurface.withValues(alpha: 0.06), blurRadius: 16, offset: const Offset(0, 4)),
         ],
       ),
-      child: Row(
+      child: Stack(
         children: [
-          Expanded(
-            child: Stack(
-              children: [
-                // Connector between the two endpoint icons.
-                const Positioned(
-                  left: 9,
-                  top: 40,
-                  bottom: 40,
-                  child: SizedBox(width: 1.5, child: ColoredBox(color: AppColors.outlineVariant)),
-                ),
-                Column(
-                  children: [
-                    _EndpointRow(
-                      icon: Icons.my_location,
-                      iconColor: AppColors.secondary,
-                      label: BookingStrings.origin,
-                      child: origin,
-                    ),
-                    const Divider(height: 1, indent: 32, color: AppColors.surfaceContainerHighest),
-                    _EndpointRow(
-                      icon: Icons.location_on_outlined,
-                      iconColor: AppColors.error,
-                      label: BookingStrings.destination,
-                      child: destination,
-                    ),
-                  ],
-                ),
-              ],
-            ),
+          // Connector between the two endpoint icons.
+          const Positioned(
+            left: 9,
+            top: 32,
+            bottom: 32,
+            child: SizedBox(width: 1.5, child: ColoredBox(color: AppColors.outlineVariant)),
           ),
-          IconButton(
-            tooltip: BookingStrings.swapEndpoints,
-            onPressed: onSwap,
-            icon: const Icon(Icons.swap_vert, color: AppColors.onSurfaceVariant),
+          Column(
+            children: [
+              _EndpointRow(
+                icon: Icons.my_location,
+                iconColor: AppColors.secondary,
+                label: BookingStrings.origin,
+                child: origin,
+              ),
+              const Divider(height: 1, indent: 32, color: AppColors.surfaceContainerHighest),
+              _EndpointRow(
+                icon: Icons.location_on_outlined,
+                iconColor: AppColors.error,
+                label: BookingStrings.destination,
+                child: destination,
+              ),
+            ],
           ),
         ],
       ),
@@ -642,23 +645,19 @@ class _EndpointRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm),
-      child: Row(
-        children: [
-          Icon(icon, size: 20, color: iconColor),
-          const SizedBox(width: AppSpacing.sm),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(label, style: AppTextStyles.bodySm),
-                const SizedBox(height: 2),
-                child,
-              ],
-            ),
-          ),
-        ],
+    // No visible label, to keep the card compact: the icon and hint text
+    // identify the row; screen readers still get the label.
+    return Semantics(
+      label: label,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
+        child: Row(
+          children: [
+            Icon(icon, size: 20, color: iconColor),
+            const SizedBox(width: AppSpacing.sm),
+            Expanded(child: child),
+          ],
+        ),
       ),
     );
   }
@@ -684,7 +683,15 @@ class _OriginRow extends StatelessWidget {
       return Row(
         children: [
           const Expanded(child: Text(BookingStrings.originUnavailable, style: AppTextStyles.bodySm)),
-          TextButton(onPressed: onRetry, child: const Text(BookingStrings.retryOrigin)),
+          TextButton(
+            onPressed: onRetry,
+            style: TextButton.styleFrom(
+              minimumSize: const Size(0, 24),
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              padding: const EdgeInsets.symmetric(horizontal: AppSpacing.xs),
+            ),
+            child: const Text(BookingStrings.retryOrigin),
+          ),
         ],
       );
     }
@@ -692,54 +699,10 @@ class _OriginRow extends StatelessWidget {
   }
 }
 
-/// Rounded bottom sheet over the map.
-class _PlannerSheet extends StatelessWidget {
-  const _PlannerSheet({required this.child});
-
-  final Widget child;
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: AppColors.surfaceContainerLowest,
-      elevation: 8,
-      shadowColor: const Color(0x33000000),
-      borderRadius: const BorderRadius.vertical(top: Radius.circular(AppRadius.xl)),
-      child: Padding(
-        padding: EdgeInsets.fromLTRB(
-          AppSpacing.containerMargin,
-          AppSpacing.sm,
-          AppSpacing.containerMargin,
-          AppSpacing.md + MediaQuery.paddingOf(context).bottom,
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Center(
-              child: Container(
-                width: 40,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: AppColors.outlineVariant,
-                  borderRadius: BorderRadius.circular(AppRadius.full),
-                ),
-              ),
-            ),
-            const SizedBox(height: AppSpacing.md),
-            Flexible(child: child),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
 class _PlaceTile extends StatelessWidget {
-  const _PlaceTile({required this.place, required this.selected, required this.onTap});
+  const _PlaceTile({required this.place, required this.onTap});
 
   final TripPlace place;
-  final bool selected;
   final VoidCallback onTap;
 
   @override
@@ -754,15 +717,11 @@ class _PlaceTile extends StatelessWidget {
             Container(
               width: 40,
               height: 40,
-              decoration: BoxDecoration(
-                color: selected ? AppColors.primary : AppColors.surfaceContainerHigh,
+              decoration: const BoxDecoration(
+                color: AppColors.surfaceContainerHigh,
                 shape: BoxShape.circle,
               ),
-              child: Icon(
-                selected ? Icons.check : Icons.place_outlined,
-                size: 20,
-                color: selected ? Colors.white : AppColors.inverseSurface,
-              ),
+              child: const Icon(Icons.place_outlined, size: 20, color: AppColors.inverseSurface),
             ),
             const SizedBox(width: AppSpacing.md),
             Expanded(
@@ -852,9 +811,22 @@ class _RouteOptionsState extends State<_RouteOptions> {
     }
     if (controller.planning == PlanningStatus.failed && planError != null) {
       final retryable = planError.code.isTransient || planError.code == BookingFailureCode.planExpired;
+      final hint = planError.nearestStop;
       return ListView(
-        padding: const EdgeInsets.all(AppSpacing.containerMargin),
-        children: [BookingErrorNotice(error: planError, onRetry: retryable ? widget.onReplan : null)],
+        shrinkWrap: true,
+        padding: EdgeInsets.fromLTRB(
+          AppSpacing.containerMargin,
+          AppSpacing.containerMargin,
+          AppSpacing.containerMargin,
+          AppSpacing.containerMargin + MediaQuery.paddingOf(context).bottom,
+        ),
+        children: [
+          BookingErrorNotice(error: planError, onRetry: retryable ? widget.onReplan : null),
+          if (hint != null) ...[
+            const SizedBox(height: AppSpacing.md),
+            _NearestStopCard(hint: hint),
+          ],
+        ],
       );
     }
     final plans = controller.plans;
@@ -936,6 +908,61 @@ class _RouteOptionsState extends State<_RouteOptions> {
                           ],
                         ),
                 ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// Map pin for a suggested stop.
+class _StopMarker extends StatelessWidget {
+  const _StopMarker();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: AppColors.primary,
+        shape: BoxShape.circle,
+        border: Border.all(color: Colors.white, width: 2),
+      ),
+      child: const Icon(Icons.directions_bus, size: 18, color: AppColors.onPrimary),
+    );
+  }
+}
+
+/// Where to board instead, shown when no route serves the trip.
+class _NearestStopCard extends StatelessWidget {
+  const _NearestStopCard({required this.hint});
+
+  final NearestStopHint hint;
+
+  @override
+  Widget build(BuildContext context) {
+    final duration = hint.walkDurationS == null ? null : BookingStrings.durationFromSeconds(hint.walkDurationS!);
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const SizedBox.square(dimension: 32, child: _StopMarker()),
+        const SizedBox(width: AppSpacing.sm),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(BookingStrings.nearestStopTitle, style: AppTextStyles.bodySm),
+              Text(
+                hint.stop.name,
+                style: AppTextStyles.bodyMd.copyWith(fontWeight: FontWeight.w700, color: AppColors.inverseSurface),
+              ),
+              const SizedBox(height: AppSpacing.base),
+              StopTypeBadge(type: hint.stop.type),
+              const SizedBox(height: AppSpacing.base),
+              Text(
+                BookingStrings.nearestStopWalk(duration, BookingStrings.distance(hint.walkDistanceM)),
+                style: AppTextStyles.bodySm,
+              ),
             ],
           ),
         ),

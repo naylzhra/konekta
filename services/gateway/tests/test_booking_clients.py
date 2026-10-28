@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 
 import httpx
 import pytest
+from fastapi import HTTPException
 
 from app.bookings import config
 from app.bookings.clients import (
@@ -13,8 +14,10 @@ from app.bookings.clients import (
     StubStopAssigner,
     haversine_m,
 )
-from app.bookings.models import GeoPoint, StopType
-from app.bookings.service import BookingError, compute_fare_idr, decode_cursor, encode_cursor
+from app.bookings.models import ErrorCode, GeoPoint, StopType
+from app.bookings.service import BookingError, BookingService, compute_fare_idr, decode_cursor, encode_cursor
+from app.routers.bookings import raise_http
+from tests.conftest import FakeRouting
 
 
 def test_haversine_known_distance() -> None:
@@ -87,3 +90,48 @@ async def test_osrm_client_parses_route_and_maps_errors() -> None:
     )
     with pytest.raises(RoutingError):
         await no_route.route([GeoPoint(lat=0, lng=0), GeoPoint(lat=0, lng=1)])
+
+
+async def test_stub_assigner_nearest_stop_within_limit() -> None:
+    assigner = StubStopAssigner()
+    near = GeoPoint(lat=-6.9200, lng=107.6191)  # ~280 m from stub stop 1
+    assert await assigner.nearest_stop(near, 3000) == STUB_STOPS[0]
+    assert await assigner.nearest_stop(near, 100) is None
+
+
+def _service(routing: FakeRouting) -> BookingService:
+    # _no_route touches only the stop assigner and routing.
+    return BookingService(None, StubStopAssigner(), StubFeederPositionProvider(supply=True), routing, None)
+
+
+async def test_no_route_suggests_nearest_stop_with_walk() -> None:
+    origin = GeoPoint(lat=-6.9200, lng=107.6191)
+    error = await _service(FakeRouting())._no_route(origin, "No feeder corridor serves both points")
+    assert error.code is ErrorCode.NO_ROUTE
+    assert error.nearest_stop.stop == STUB_STOPS[0]
+    assert error.nearest_stop.walk_distance_m == pytest.approx(haversine_m(origin, STUB_STOPS[0].location))
+    assert error.nearest_stop.walk_duration_s is not None
+
+
+async def test_no_route_hint_is_straight_line_when_routing_is_down() -> None:
+    routing = FakeRouting()
+    routing.fail = True
+    error = await _service(routing)._no_route(GeoPoint(lat=-6.9200, lng=107.6191), "no corridor")
+    assert error.nearest_stop.stop == STUB_STOPS[0]
+    assert error.nearest_stop.walk_duration_s is None
+
+
+async def test_no_route_without_a_nearby_stop_has_no_hint() -> None:
+    far = GeoPoint(lat=-7.0400, lng=107.5100)  # > NEAREST_STOP_HINT_MAX_M from every stub stop
+    error = await _service(FakeRouting())._no_route(far, "no corridor")
+    assert error.nearest_stop is None
+
+
+async def test_no_route_hint_is_in_the_error_body() -> None:
+    error = await _service(FakeRouting())._no_route(GeoPoint(lat=-6.9200, lng=107.6191), "no corridor")
+    with pytest.raises(HTTPException) as raised:
+        raise_http(error)
+    detail = raised.value.detail
+    assert detail["code"] == "no_route"
+    assert detail["nearest_stop"]["stop"]["name"] == STUB_STOPS[0].name
+    assert detail["nearest_stop"]["walk_distance_m"] > 0

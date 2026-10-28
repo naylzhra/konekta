@@ -59,6 +59,11 @@ class StopAssigner(Protocol):
 
     async def assign_dropoff_stop(self, request: StopAssignmentRequest) -> Optional[Stop]: ...
 
+    async def nearest_stop(self, location: GeoPoint, max_m: float) -> Optional[Stop]:
+        """Closest active static halte or approved virtual stop on any
+        corridor, within [max_m] of [location]."""
+        ...
+
 
 def _placeholder_stop(index: int, lat: float, lng: float) -> Stop:
     return Stop(
@@ -115,6 +120,10 @@ class StubStopAssigner:
 
     async def assign_dropoff_stop(self, request: StopAssignmentRequest) -> Optional[Stop]:
         return self._assign(request)
+
+    async def nearest_stop(self, location: GeoPoint, max_m: float) -> Optional[Stop]:
+        nearest = min(STUB_STOPS, key=lambda stop: haversine_m(stop.location, location))
+        return nearest if haversine_m(nearest.location, location) <= max_m else None
 
     async def match_corridor(self, origin: GeoPoint, destination: GeoPoint) -> Optional[RouteMatch]:
         if self._in_area(origin) and self._in_area(destination):
@@ -185,7 +194,9 @@ class DbStopAssigner:
             stop.id,
         ))
 
-    async def _assign(self, request: StopAssignmentRequest) -> Optional[Stop]:
+    async def _nearest(
+        self, location: GeoPoint, corridor_id: Optional[str], direction: Optional[Direction], max_m: float
+    ) -> Optional[Stop]:
         row = await self._pool.fetchrow(
             """SELECT s.id, s.type::text AS type, s.name, s.corridor_id, s.valid_until,
                       ST_Y(s.location::geometry) AS lat, ST_X(s.location::geometry) AS lng
@@ -205,8 +216,7 @@ class DbStopAssigner:
                ORDER BY ST_Distance(s.location,
                       ST_SetSRID(ST_MakePoint($1, $2),4326)::geography), s.id
                LIMIT 1""",
-            request.location.lng, request.location.lat, request.corridor_id,
-            config.MAX_WALK_TO_STOP_M, request.direction,
+            location.lng, location.lat, corridor_id, max_m, direction,
         )
         if row is None:
             return None
@@ -216,11 +226,19 @@ class DbStopAssigner:
             corridor_id=row["corridor_id"], valid_until=row["valid_until"],
         )
 
+    async def _assign(self, request: StopAssignmentRequest) -> Optional[Stop]:
+        return await self._nearest(
+            request.location, request.corridor_id, request.direction, config.MAX_WALK_TO_STOP_M
+        )
+
     async def assign_pickup_stop(self, request: StopAssignmentRequest) -> Optional[Stop]:
         return await self._assign(request)
 
     async def assign_dropoff_stop(self, request: StopAssignmentRequest) -> Optional[Stop]:
         return await self._assign(request)
+
+    async def nearest_stop(self, location: GeoPoint, max_m: float) -> Optional[Stop]:
+        return await self._nearest(location, None, None, max_m)
 
 
 # --- FeederPositionProvider (owned by live tracking, DESIGN.md §5.2) --------

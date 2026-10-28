@@ -171,9 +171,19 @@ class ErrorCode(StrEnum):
     INVALID_CURSOR = "invalid_cursor"
 
 
+class NearestStopHint(BaseModel):
+    """Closest boardable stop to the origin, offered with a no_route error."""
+
+    stop: Stop
+    walk_distance_m: float
+    # null when routing was unavailable; walk_distance_m is then straight-line
+    walk_duration_s: Optional[float] = None
+
+
 class ErrorDetail(BaseModel):
     code: ErrorCode
     message: str
+    nearest_stop: Optional[NearestStopHint] = None  # no_route only
 
 
 # --- WebSocket events (envelope: app/websocket/envelope.py) ----------------
