@@ -46,8 +46,8 @@ services:
     restart: unless-stopped
 
   forecasting-service:
-    # Nothing calls it yet; skipped to save RAM on the 1 GB free VM. Start it
-    # with `--profile forecasting` once the gateway uses it.
+    # Run as one-off jobs (train / predict, see infra/azure/README.md), never
+    # as a long-lived service, to save RAM on the 1 GB VM.
     profiles: ["forecasting"]
     ports: !reset []
     environment:

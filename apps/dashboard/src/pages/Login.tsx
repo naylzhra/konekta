@@ -1,19 +1,36 @@
-import { useState, type CSSProperties, type FormEvent } from "react";
+import { useState, type FormEvent } from "react";
+import logo from "../assets/logo.png";
+import logoWhite from "../assets/logo_putih.png";
+import "./Login.css";
 
 type Props = {
   onLogin: (phoneNumber: string, password: string) => Promise<void>;
 };
 
-const inputStyle: CSSProperties = {
-  padding: "0.65rem 0.75rem",
-  border: "1px solid #d4d4d4",
-  borderRadius: 8,
-  fontSize: "1rem",
-};
+function EyeIcon({ off }: { off: boolean }) {
+  return (
+    <svg
+      width="20"
+      height="20"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z" />
+      <circle cx="12" cy="12" r="3" />
+      {off && <line x1="3" y1="3" x2="21" y2="21" />}
+    </svg>
+  );
+}
 
 export default function Login({ onLogin }: Props) {
   const [phone, setPhone] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -39,57 +56,74 @@ export default function Login({ onLogin }: Props) {
   }
 
   return (
-    <div style={{ minHeight: "100vh", display: "grid", placeItems: "center", padding: "1rem" }}>
-      <form
-        onSubmit={handleSubmit}
-        style={{ width: "100%", maxWidth: 360, display: "flex", flexDirection: "column", gap: "0.75rem" }}
-      >
-        <h1 style={{ margin: 0, fontSize: "1.5rem" }}>KONEKTA Ops Dashboard</h1>
-        <p style={{ margin: "0 0 0.5rem", color: "#737373" }}>Masuk dengan akun pemerintah.</p>
-
-        <label htmlFor="phone">Nomor Telepon</label>
-        <div style={{ display: "flex", gap: "0.5rem" }}>
-          <span style={{ ...inputStyle, background: "#f5f5f5" }}>+62</span>
-          <input
-            id="phone"
-            inputMode="numeric"
-            autoComplete="tel-national"
-            value={phone}
-            onChange={(e) => setPhone(e.target.value.replace(/\D/g, "").slice(0, 12))}
-            style={{ ...inputStyle, flex: 1, minWidth: 0 }}
-          />
+    <div className="login">
+      <aside className="login__brand">
+        <img src={logoWhite} alt="KONEKTA" className="login__brand-logo" />
+        <div className="login__brand-copy">
+          <h2>Pantau layanan feeder Bandung secara real-time</h2>
+          <p>
+            Lihat sebaran permintaan, titik jemput virtual, dan posisi armada feeder dalam satu
+            dasbor operasional.
+          </p>
         </div>
+      </aside>
 
-        <label htmlFor="password">Kata Sandi</label>
-        <input
-          id="password"
-          type="password"
-          autoComplete="current-password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          style={inputStyle}
-        />
+      <main className="login__panel">
+        <form className="login__form" onSubmit={handleSubmit} noValidate>
+          <img src={logo} alt="KONEKTA" className="login__logo" />
+          <h1 className="login__title">Masuk ke Dasbor</h1>
+          <p className="login__subtitle">Gunakan akun pemerintah yang terdaftar.</p>
 
-        {error && <p style={{ margin: 0, color: "#dc2626", fontSize: "0.875rem" }}>{error}</p>}
+          <label htmlFor="phone" className="login__label">
+            Nomor Telepon
+          </label>
+          <div className="login__field">
+            <span className="login__prefix">+62</span>
+            <input
+              id="phone"
+              className="login__input"
+              inputMode="numeric"
+              autoComplete="tel-national"
+              value={phone}
+              onChange={(e) => setPhone(e.target.value.replace(/\D/g, "").slice(0, 12))}
+            />
+          </div>
 
-        <button
-          type="submit"
-          disabled={submitting}
-          style={{
-            marginTop: "0.5rem",
-            padding: "0.75rem",
-            border: "none",
-            borderRadius: 8,
-            background: "#171717",
-            color: "#fff",
-            fontSize: "1rem",
-            cursor: submitting ? "default" : "pointer",
-            opacity: submitting ? 0.6 : 1,
-          }}
-        >
-          {submitting ? "Memuat..." : "Masuk"}
-        </button>
-      </form>
+          <label htmlFor="password" className="login__label">
+            Kata Sandi
+          </label>
+          <div className="login__field">
+            <div className="login__password">
+              <input
+                id="password"
+                className="login__input"
+                type={showPassword ? "text" : "password"}
+                autoComplete="current-password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+              />
+              <button
+                type="button"
+                className="login__toggle"
+                onClick={() => setShowPassword((v) => !v)}
+                aria-label={showPassword ? "Sembunyikan kata sandi" : "Tampilkan kata sandi"}
+              >
+                <EyeIcon off={!showPassword} />
+              </button>
+            </div>
+          </div>
+
+          {error && (
+            <p className="login__error" role="alert">
+              {error}
+            </p>
+          )}
+
+          <button type="submit" className="login__submit" disabled={submitting}>
+            {submitting ? "Memuat..." : "Masuk"}
+          </button>
+        </form>
+      </main>
     </div>
   );
 }

@@ -40,15 +40,38 @@ npm run lint    # eslint .
 
 Government accounts can't self-register via `POST /auth/register`, and no
 admin UI is needed — they're created directly in the database with the
-gateway's CLI (`services/gateway/app/cli/create_user.py`). With the stack
-running, from the repo root:
+gateway's CLI (`services/gateway/app/cli/create_user.py`). The account lives
+in whichever database that gateway points at, so run it against the backend
+the dashboard's `VITE_GATEWAY_URL` uses.
+
+**Local backend** (`VITE_GATEWAY_URL=http://localhost:8000`) — with the
+stack running, from the repo root:
 
 ```bash
 docker compose -f infra/docker/docker-compose.yml exec gateway python -m app.cli.create_user --phone +6281234567890 --role government
 ```
 
-It prompts for a password twice (min. 8 characters, input is hidden). Log in
-to the dashboard with that phone number and password.
+**Azure backend** (`VITE_GATEWAY_URL=https://<API_DOMAIN>`) — SSH into the
+VM and use the `kc` alias set up in [`infra/azure/README.md`](../../infra/azure/README.md):
+
+```bash
+ssh azureuser@<API_DOMAIN>
+cd konekta
+kc exec gateway python -m app.cli.create_user --phone +6281234567890 --role government
+```
+
+Either way it prompts for a password twice (min. 8 characters, input is
+hidden). Log in to the dashboard with the phone number **without** `+62`
+(the form adds it, e.g. `81234567890`) and that password.
+
+Notes:
+
+- `--role admin` creates an admin account the same way (API only, it can't
+  log in to the dashboard).
+- Each phone number can only be registered once; the CLI exits with
+  `Phone number ... is already registered` otherwise.
+- There's no CLI yet for listing, resetting the password of, or deleting
+  accounts — do that in `psql` until an admin platform exists.
 
 ### If it fails with `invalid input value for enum user_role: "government"`
 

@@ -1,0 +1,74 @@
+.approvals {
+  max-width: 1100px;
+  margin: 0 auto;
+}
+
+.btn-secondary {
+  padding: 7px var(--space-sm);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-standard);
+  background: var(--color-surface-container-lowest);
+  color: var(--color-primary);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.btn-secondary:hover {
+  background: var(--color-surface-container-low);
+}
+
+.approvals button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.approvals__error {
+  margin: 0 0 var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--radius-standard);
+  background: var(--color-error-container);
+  color: var(--color-on-error-container);
+  font-size: 12px;
+}
+
+.approvals__item {
+  padding: var(--space-md) 0;
+  border-top: 1px solid var(--border);
+}
+
+.approvals__title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  font-size: 13px;
+}
+
+.approvals__title .route-id {
+  margin: 0;
+}
+
+.approvals__title small {
+  font-size: 11px;
+}
+
+.approvals__meta {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--color-outline);
+}
+
+.approvals__checks {
+  margin: var(--space-xs) 0 0;
+  padding-left: var(--space-lg);
+  font-size: 12px;
+}
+
+.approvals__checks .is-failed {
+  color: var(--color-error);
+}
+
+.approvals__actions {
+  display: flex;
+  gap: var(--space-xs);
+  margin-top: var(--space-sm);
+}
