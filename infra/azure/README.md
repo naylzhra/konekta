@@ -152,6 +152,31 @@ Backup (copy the file off the VM afterwards, e.g. with `scp`):
 kc exec -T postgres pg_dump -U konekta konekta | gzip > ~/konekta-$(date +%F).sql.gz
 ```
 
+## Demand forecasting (XGBoost)
+
+`forecasting-service` runs as one-off jobs under the `forecasting` profile,
+never as a long-lived container (see `services/forecasting-service/README.md`).
+First time, after `git pull`:
+
+```bash
+kc exec -T postgres psql -U konekta konekta < infra/db/migrations/014_demand_forecasts.sql
+kc up -d --build gateway                                    # /dashboard/demand-forecast
+kc --profile forecasting build forecasting-service
+kc --profile forecasting run --rm forecasting-service python -m app.training.train
+kc --profile forecasting run --rm forecasting-service python -m app.jobs.predict
+```
+
+Keep forecasts fresh with cron (`crontab -e`; the `kc` alias isn't available
+there): predict daily, retrain weekly so new trial bookings are picked up.
+
+```
+30 0 * * * cd ~/konekta && docker compose --env-file infra/azure/.env -f infra/docker/docker-compose.yml -f infra/azure/docker-compose.prod.yml --profile forecasting run --rm forecasting-service python -m app.jobs.predict >> ~/forecast.log 2>&1
+0 0 * * 1 cd ~/konekta && docker compose --env-file infra/azure/.env -f infra/docker/docker-compose.yml -f infra/azure/docker-compose.prod.yml --profile forecasting run --rm forecasting-service python -m app.training.train >> ~/forecast.log 2>&1
+```
+
+After changing forecasting code: `git pull`, then rebuild with
+`kc --profile forecasting build forecasting-service` and rerun train + predict.
+
 ## Cost notes
 
 - **Stopping the VM from the portal** (Stop → "deallocated") stops compute

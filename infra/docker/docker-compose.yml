@@ -109,9 +109,13 @@ services:
       - "8003:8000"
     environment:
       DATABASE_URL: postgresql://konekta:konekta@postgres:5432/konekta
+    volumes:
+      # Trained model (app.training.train) shared with the predict job.
+      - forecasting_artifacts:/app/artifacts
     depends_on:
       postgres:
         condition: service_healthy
 
 volumes:
   postgres_data:
+  forecasting_artifacts:
