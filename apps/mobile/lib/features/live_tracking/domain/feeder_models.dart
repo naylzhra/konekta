@@ -1,5 +1,25 @@
 library;
 
+/// Which way a corridor is travelled (ROUTES.md): forward runs the route list
+/// from stop 1, backward is the return route with its own stops.
+enum RouteDirection {
+  forward('forward'),
+  backward('backward');
+
+  const RouteDirection(this.wire);
+
+  final String wire;
+
+  RouteDirection get reversed =>
+      this == forward ? backward : forward;
+
+  static RouteDirection? fromWire(String? wire) => switch (wire) {
+        'forward' => forward,
+        'backward' => backward,
+        _ => null,
+      };
+}
+
 class FeederOption {
   const FeederOption(
       {required this.id,

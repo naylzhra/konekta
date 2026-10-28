@@ -35,14 +35,15 @@ class FeederApi {
     ];
   }
 
-  Future<CorridorRoute> routeStops(String corridorId) async =>
-      CorridorRoute.fromJson(
-          await _request('GET', '/corridors/$corridorId/stops')
-              as Map<String, dynamic>);
+  Future<CorridorRoute> routeStops(String corridorId,
+          {RouteDirection direction = RouteDirection.forward}) async =>
+      CorridorRoute.fromJson(await _request('GET', '/corridors/$corridorId/stops',
+          query: {'direction': direction.wire}) as Map<String, dynamic>);
 
-  Future<List<LatLng>> routePath(String corridorId) async {
-    final body = await _request('GET', '/corridors/$corridorId/path')
-        as Map<String, dynamic>;
+  Future<List<LatLng>> routePath(String corridorId,
+      {RouteDirection direction = RouteDirection.forward}) async {
+    final body = await _request('GET', '/corridors/$corridorId/path',
+        query: {'direction': direction.wire}) as Map<String, dynamic>;
     return [
       for (final point in body['points'] as List<dynamic>)
         LatLng(
@@ -72,6 +73,7 @@ class FeederApi {
     required double lng,
     double? heading,
     double? accuracyM,
+    RouteDirection? direction,
   }) async {
     final body = await _request(
       'POST',
@@ -82,6 +84,7 @@ class FeederApi {
         'lng': lng,
         if (heading != null) 'heading': heading,
         if (accuracyM != null) 'accuracy_m': accuracyM,
+        if (direction != null) 'direction': direction.wire,
       },
       timeout: const Duration(seconds: 5),
     );
@@ -97,12 +100,13 @@ class FeederApi {
     String path, {
     String? token,
     Object? body,
+    Map<String, String>? query,
     Duration timeout = ApiClient.defaultTimeout,
   }) async {
     final ApiResponse response;
     try {
       response = await _api.send(method, path,
-          token: token, body: body, timeout: timeout);
+          token: token, body: body, query: query, timeout: timeout);
     } on ApiTransportException {
       throw const FeederApiException(FeederApiException.offline);
     }

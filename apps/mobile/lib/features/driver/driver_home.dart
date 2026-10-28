@@ -24,6 +24,7 @@ import '../live_tracking/state/driver_duty_controller.dart';
 import '../live_tracking/ui/map_markers.dart';
 import '../live_tracking/ui/service_area_map.dart';
 import 'data/driver_trip_api.dart';
+import 'direction_picker.dart';
 import 'driver_sheet.dart';
 
 class DriverHome extends StatefulWidget {
@@ -50,8 +51,13 @@ class _DriverHomeState extends State<DriverHome> {
   bool _mapReady = false;
   String? _routeCorridorId;
   String? _loadingCorridorId;
-  List<LatLng> _routePath = const [];
-  List<CorridorRouteStop> _routeStops = const [];
+  Map<RouteDirection, List<LatLng>> _paths = const {};
+  Map<RouteDirection, List<CorridorRouteStop>> _stopsByDirection = const {};
+
+  /// Line and stops of the direction being driven (or about to be).
+  List<LatLng> get _routePath => _paths[_duty.direction] ?? const [];
+  List<CorridorRouteStop> get _routeStops =>
+      _stopsByDirection[_duty.direction] ?? const [];
 
   List<DriverTaskStop>? _tasks;
   bool _tasksFailed = false;
@@ -189,15 +195,24 @@ class _DriverHomeState extends State<DriverHome> {
   Future<void> _loadAssignedRoute(String corridorId) async {
     _loadingCorridorId = corridorId;
     try {
+      const directions = RouteDirection.values;
       final results = await Future.wait<Object>([
-        _feederApi.routePath(corridorId),
-        _feederApi.routeStops(corridorId),
+        for (final direction in directions) ...[
+          _feederApi.routePath(corridorId, direction: direction),
+          _feederApi.routeStops(corridorId, direction: direction),
+        ],
       ]);
       if (!mounted || _duty.feeder?.corridorId != corridorId) return;
       setState(() {
         _routeCorridorId = corridorId;
-        _routePath = results[0] as List<LatLng>;
-        _routeStops = (results[1] as CorridorRoute).stops;
+        _paths = {
+          for (var i = 0; i < directions.length; i++)
+            directions[i]: results[2 * i] as List<LatLng>,
+        };
+        _stopsByDirection = {
+          for (var i = 0; i < directions.length; i++)
+            directions[i]: (results[2 * i + 1] as CorridorRoute).stops,
+        };
       });
       if (_mapReady && !_duty.isOnDuty) _fitAssignedRoute();
     } catch (_) {
@@ -265,8 +280,10 @@ class _DriverHomeState extends State<DriverHome> {
     setState(() => _navLoading = true);
     _navFetchedAt = DateTime.now();
     try {
-      final nav = await _trip.navigation(here, stopId: _chosenStopId);
-      if (!mounted) return;
+      final direction = _duty.direction;
+      final nav = await _trip.navigation(here,
+          stopId: _chosenStopId, direction: direction);
+      if (!mounted || direction != _duty.direction) return;
       setState(() {
         _nav = nav;
         _navFailed = false;
@@ -282,6 +299,91 @@ class _DriverHomeState extends State<DriverHome> {
     } finally {
       if (mounted) setState(() => _navLoading = false);
     }
+  }
+
+  DirectionEnds get _directionEnds => {
+        for (final entry in _stopsByDirection.entries)
+          if (entry.value.isNotEmpty)
+            entry.key: (entry.value.first.name, entry.value.last.name),
+      };
+
+  String? get _headingText {
+    final ends = _directionEnds[_duty.direction];
+    return ends == null ? null : DriverStrings.heading(ends.$1, ends.$2);
+  }
+
+  /// The direction whose first stop is closest, so a driver at a terminal
+  /// starts the right way without touching the swap button.
+  Future<RouteDirection> _guessDirection() async {
+    try {
+      if (await _location.permissionState() != LocationPermissionState.granted) {
+        return _duty.direction;
+      }
+      final fix = await _location.getCurrent().timeout(const Duration(seconds: 3));
+      if (fix == null) return _duty.direction;
+      final here = LatLng(fix.lat, fix.lng);
+      RouteDirection? best;
+      double? bestM;
+      for (final entry in _stopsByDirection.entries) {
+        final first = entry.value.isEmpty ? null : entry.value.first;
+        if (first?.lat == null || first?.lng == null) continue;
+        final metres = metresTo(here, LatLng(first!.lat!, first.lng!));
+        if (bestM == null || metres < bestM) {
+          best = entry.key;
+          bestM = metres;
+        }
+      }
+      return best ?? _duty.direction;
+    } catch (_) {
+      return _duty.direction;
+    }
+  }
+
+  Future<void> _startDuty() async {
+    final ends = _directionEnds;
+    if (ends.length < RouteDirection.values.length) {
+      // Route lists not loaded (yet): start with the current direction.
+      await _duty.startDuty();
+      return;
+    }
+    final initial = await _guessDirection();
+    if (!mounted) return;
+    final direction = await pickDirection(context, ends: ends, initial: initial);
+    if (direction == null || !mounted) return;
+    setState(() {
+      _nav = null;
+      _navFetchedAt = null;
+      _chosenStopId = null;
+    });
+    await _duty.startDuty(direction: direction);
+  }
+
+  Future<void> _switchDirection() async {
+    final next = _directionEnds[_duty.direction.reversed];
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text(DriverStrings.switchDirectionTitle),
+        content: Text(DriverStrings.switchDirectionBody(next?.$2 ?? '-')),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text(DriverStrings.cancel)),
+          FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text(DriverStrings.switchDirection)),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    _duty.switchDirection();
+    setState(() {
+      _nav = null;
+      _navFetchedAt = null;
+      _chosenStopId = null;
+    });
+    final here = _here;
+    if (here != null) unawaited(_fetchNav(here));
   }
 
   void _chooseStop(String stopId) {
@@ -508,6 +610,9 @@ class _DriverHomeState extends State<DriverHome> {
           onChoose: _chooseStop,
           onArrived: _markArrived,
           onDeparted: _markDeparted,
+          onStart: _startDuty,
+          onSwitchDirection: _switchDirection,
+          heading: _headingText,
         ),
       ],
     );

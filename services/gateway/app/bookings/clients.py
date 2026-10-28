@@ -4,7 +4,7 @@
 import math
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Optional, Protocol
+from typing import Literal, Optional, Protocol
 
 import httpx
 import asyncpg
@@ -26,14 +26,32 @@ def haversine_m(a: GeoPoint, b: GeoPoint) -> float:
 # --- StopAssigner -> pooling-service / stop-optimization-service -----------
 
 
+Direction = Literal["forward", "backward"]
+
+
 class StopAssignmentRequest(BaseModel):
     location: GeoPoint
     seats: int = 1
     corridor_id: Optional[str] = None
+    # Static stops are limited to this direction's route list when set.
+    direction: Optional[Direction] = None
+
+
+class RouteMatch(BaseModel):
+    """The corridor serving a trip and the direction it is travelled in."""
+    corridor_id: str
+    direction: Direction = "forward"
 
 
 class StopAssigner(Protocol):
-    async def match_corridor(self, origin: GeoPoint, destination: GeoPoint) -> Optional[str]: ...
+    async def match_corridor(self, origin: GeoPoint, destination: GeoPoint) -> Optional[RouteMatch]: ...
+
+    async def progress_m(
+        self, corridor_id: str, direction: Direction, points: list[GeoPoint]
+    ) -> list[Optional[float]]:
+        """Distance of each point along the corridor's line for [direction];
+        None where it can't be measured."""
+        ...
 
     async def is_active(self, stop: Stop) -> bool: ...
 
@@ -98,8 +116,13 @@ class StubStopAssigner:
     async def assign_dropoff_stop(self, request: StopAssignmentRequest) -> Optional[Stop]:
         return self._assign(request)
 
-    async def match_corridor(self, origin: GeoPoint, destination: GeoPoint) -> Optional[str]:
-        return "stub-corridor" if self._in_area(origin) and self._in_area(destination) else None
+    async def match_corridor(self, origin: GeoPoint, destination: GeoPoint) -> Optional[RouteMatch]:
+        if self._in_area(origin) and self._in_area(destination):
+            return RouteMatch(corridor_id="stub-corridor")
+        return None
+
+    async def progress_m(self, corridor_id, direction, points) -> list[Optional[float]]:
+        return [None for _ in points]
 
     async def is_active(self, stop: Stop) -> bool:
         return stop.valid_until is None or stop.valid_until > self._clock()
@@ -111,25 +134,45 @@ class DbStopAssigner:
     def __init__(self, pool: asyncpg.Pool) -> None:
         self._pool = pool
 
-    async def match_corridor(self, origin: GeoPoint, destination: GeoPoint) -> Optional[str]:
-        return await self._pool.fetchval(
-            """SELECT id FROM corridors c
-               WHERE c.path IS NOT NULL AND NOT c.is_dummy
-                 AND ST_DWithin(c.path,
+    async def match_corridor(self, origin: GeoPoint, destination: GeoPoint) -> Optional[RouteMatch]:
+        """The closest corridor line, in either direction, along which the
+        destination lies at least 300 m after the origin."""
+        row = await self._pool.fetchrow(
+            """SELECT c.id, d.direction FROM corridors c
+               CROSS JOIN LATERAL (VALUES ('forward', c.path), ('backward', c.return_path))
+                    AS d(direction, line)
+               WHERE d.line IS NOT NULL AND NOT c.is_dummy
+                 AND ST_DWithin(d.line,
                        ST_SetSRID(ST_MakePoint($1, $2),4326)::geography, c.catchment_m)
-                 AND ST_DWithin(c.path,
+                 AND ST_DWithin(d.line,
                        ST_SetSRID(ST_MakePoint($3, $4),4326)::geography, c.catchment_m)
-                 AND (ST_LineLocatePoint(c.path::geometry,
+                 AND (ST_LineLocatePoint(d.line::geometry,
                        ST_SetSRID(ST_MakePoint($3, $4),4326))
-                    - ST_LineLocatePoint(c.path::geometry,
-                       ST_SetSRID(ST_MakePoint($1, $2),4326))) * ST_Length(c.path) >= 300
-               ORDER BY ST_Distance(c.path,
+                    - ST_LineLocatePoint(d.line::geometry,
+                       ST_SetSRID(ST_MakePoint($1, $2),4326))) * ST_Length(d.line) >= 300
+               ORDER BY ST_Distance(d.line,
                         ST_SetSRID(ST_MakePoint($1, $2),4326)::geography)
-                      + ST_Distance(c.path,
+                      + ST_Distance(d.line,
                         ST_SetSRID(ST_MakePoint($3, $4),4326)::geography)
                LIMIT 1""",
             origin.lng, origin.lat, destination.lng, destination.lat,
         )
+        return RouteMatch(corridor_id=row["id"], direction=row["direction"]) if row else None
+
+    async def progress_m(self, corridor_id, direction, points) -> list[Optional[float]]:
+        if not points:
+            return []
+        rows = await self._pool.fetch(
+            """SELECT p.ord, ST_LineLocatePoint(line::geometry,
+                          ST_SetSRID(ST_MakePoint(p.lng, p.lat), 4326)) * ST_Length(line) AS along_m
+               FROM (SELECT CASE WHEN $2 = 'backward' THEN return_path ELSE path END AS line
+                     FROM corridors WHERE id = $1) c,
+                    unnest($3::float8[], $4::float8[]) WITH ORDINALITY AS p(lat, lng, ord)
+               WHERE c.line IS NOT NULL""",
+            corridor_id, direction, [p.lat for p in points], [p.lng for p in points],
+        )
+        along = {row["ord"]: row["along_m"] for row in rows}
+        return [along.get(i + 1) for i in range(len(points))]
 
     async def is_active(self, stop: Stop) -> bool:
         return bool(await self._pool.fetchval(
@@ -154,13 +197,16 @@ class DbStopAssigner:
                       WHERE candidate.approved_stop_id = s.id AND candidate.status = 'approved'))
                  AND c.path IS NOT NULL AND NOT c.is_dummy
                  AND ($3::text IS NULL OR s.corridor_id = $3)
+                 AND ($5::text IS NULL OR s.type <> 'static' OR EXISTS (
+                      SELECT 1 FROM corridor_route_stops r
+                      WHERE r.stop_id = s.id AND r.direction = $5))
                  AND ST_DWithin(s.location,
                       ST_SetSRID(ST_MakePoint($1, $2),4326)::geography, $4)
                ORDER BY ST_Distance(s.location,
                       ST_SetSRID(ST_MakePoint($1, $2),4326)::geography), s.id
                LIMIT 1""",
             request.location.lng, request.location.lat, request.corridor_id,
-            config.MAX_WALK_TO_STOP_M,
+            config.MAX_WALK_TO_STOP_M, request.direction,
         )
         if row is None:
             return None
@@ -188,6 +234,8 @@ class FeederPosition(BaseModel):
     occupancy: int = 0
     capacity: int
     corridor_id: Optional[str] = None
+    # Chosen by the driver when going on duty; None from older clients.
+    direction: Optional[Direction] = None
     updated_at: datetime
 
     @property

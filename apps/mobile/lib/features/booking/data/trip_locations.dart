@@ -7,6 +7,7 @@ library;
 import '../../../core/api/api_client.dart';
 import '../../../core/location/user_location_provider.dart';
 import '../../live_tracking/data/feeder_api.dart';
+import '../../live_tracking/domain/feeder_models.dart';
 import '../domain/booking_models.dart';
 
 class TripPlace {
@@ -56,11 +57,12 @@ class LiveTripLocations implements TripLocations {
     final corridors = await _feederApi.listCorridors();
     final places = <TripPlace>[];
     for (final corridor in corridors.where((c) => !c.isDummy)) {
-      final route = await _feederApi.routeStops(corridor.id);
-      for (final stop in route.stops) {
-        if (stop.lat != null && stop.lng != null) {
+      for (final direction in RouteDirection.values) {
+        final route = await _feederApi.routeStops(corridor.id, direction: direction);
+        for (final stop in route.stops) {
+          if (stop.lat == null || stop.lng == null) continue;
           places.add(TripPlace(
-            id: '${corridor.id}-${stop.position}',
+            id: '${corridor.id}-${direction.wire}-${stop.position}',
             name: '${stop.name} (${corridor.id})',
             location: GeoPoint(lat: stop.lat!, lng: stop.lng!),
           ));

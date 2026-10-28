@@ -40,3 +40,43 @@ async def test_osrm_client_parses_steps_when_requested() -> None:
     assert [(s.type, s.modifier, s.name) for s in route.steps] == [
         ("depart", None, "Jalan Merdeka"), ("turn", "left", "Jalan Aceh")]
     assert route.steps[1].location == GeoPoint(lat=-6.9097, lng=107.611)
+
+
+async def test_eligible_feeders_match_direction_and_skip_ones_past_pickup() -> None:
+    from datetime import datetime, timezone
+    from uuid import uuid4
+
+    from app.bookings.clients import FeederPosition
+    from app.bookings.models import Stop, StopType
+    from app.bookings.service import BookingService
+
+    now = datetime.now(timezone.utc)
+
+    def feeder(feeder_id, lat, direction, occupancy=0):
+        return FeederPosition(feeder_id=feeder_id, lat=lat, lng=107.61, capacity=8, occupancy=occupancy,
+                              corridor_id="K1", direction=direction, updated_at=now)
+
+    fleet = [
+        feeder("ahead", -6.900, "forward"),     # already past the pickup
+        feeder("behind", -6.940, "forward"),
+        feeder("other-way", -6.935, "backward"),
+        feeder("legacy", -6.930, None),          # no direction reported: forward
+        feeder("full", -6.938, "forward", occupancy=8),
+    ]
+    along = {-6.920: 1000.0, -6.900: 1500.0, -6.940: 200.0, -6.930: 600.0, -6.938: 300.0, -6.935: 900.0}
+
+    class Feeders:
+        async def nearest(self, lat, lng, radius_m, corridor_id=None, limit=5):
+            return fleet
+
+    class Stops:
+        async def progress_m(self, corridor_id, direction, points):
+            return [along[p.lat] for p in points]
+
+    service = BookingService.__new__(BookingService)
+    service._feeders, service._stops = Feeders(), Stops()
+    pickup = Stop(id=uuid4(), type=StopType.STATIC, name="Halte", corridor_id="K1",
+                  location=GeoPoint(lat=-6.920, lng=107.61))
+    picked = await service._eligible_feeders(pickup, "forward", seats=1)
+    assert [f.feeder_id for f in picked] == ["legacy", "behind"]
+    assert [f.feeder_id for f in await service._eligible_feeders(pickup, "backward", seats=1)] == ["other-way"]

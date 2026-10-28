@@ -2,6 +2,7 @@ import 'package:latlong2/latlong.dart';
 
 import '../../../core/api/api_client.dart';
 import '../../../core/navigation/nav_instructions.dart';
+import '../../live_tracking/domain/feeder_models.dart';
 
 enum StopPhase { pickup, dropoff }
 
@@ -139,11 +140,13 @@ class DriverTripApi {
 
   /// Road route to [stopId], or to the next stop ahead on the corridor when
   /// null. Returns null when the corridor has no stops to navigate to.
-  Future<DriverNavigation?> navigation(LatLng from, {String? stopId}) async {
+  Future<DriverNavigation?> navigation(LatLng from,
+      {String? stopId, RouteDirection direction = RouteDirection.forward}) async {
     try {
       final body = await _get('/driver/stops/navigation', query: {
         'lat': '${from.latitude}',
         'lng': '${from.longitude}',
+        'direction': direction.wire,
         if (stopId != null) 'stop_id': stopId,
       });
       return DriverNavigation.fromJson(body as Map<String, dynamic>);

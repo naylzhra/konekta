@@ -6,9 +6,11 @@ import '../data/feeder_api.dart';
 import '../domain/feeder_models.dart';
 
 class RouteStopsPage extends StatefulWidget {
-  const RouteStopsPage({super.key, required this.corridorId});
+  const RouteStopsPage(
+      {super.key, required this.corridorId, this.direction = RouteDirection.forward});
 
   final String corridorId;
+  final RouteDirection direction;
 
   @override
   State<RouteStopsPage> createState() => _RouteStopsPageState();
@@ -16,9 +18,18 @@ class RouteStopsPage extends StatefulWidget {
 
 class _RouteStopsPageState extends State<RouteStopsPage> {
   late final _api = FeederApi(ApiClient());
-  late Future<CorridorRoute> _route = _api.routeStops(widget.corridorId);
+  late RouteDirection _direction = widget.direction;
+  late Future<CorridorRoute> _route = _load();
 
-  void _reload() => setState(() => _route = _api.routeStops(widget.corridorId));
+  Future<CorridorRoute> _load() =>
+      _api.routeStops(widget.corridorId, direction: _direction);
+
+  void _reload() => setState(() => _route = _load());
+
+  void _show(RouteDirection direction) => setState(() {
+        _direction = direction;
+        _route = _load();
+      });
 
   @override
   Widget build(BuildContext context) => Scaffold(
@@ -43,6 +54,20 @@ class _RouteStopsPageState extends State<RouteStopsPage> {
               padding: const EdgeInsets.all(AppSpacing.containerMargin),
               children: [
                 Text(route.name, style: AppTextStyles.headlineLgMobile),
+                const SizedBox(height: AppSpacing.sm),
+                SegmentedButton<RouteDirection>(
+                  segments: const [
+                    ButtonSegment(value: RouteDirection.forward, label: Text('Arah pergi')),
+                    ButtonSegment(value: RouteDirection.backward, label: Text('Arah balik')),
+                  ],
+                  selected: {_direction},
+                  onSelectionChanged: (selected) => _show(selected.single),
+                ),
+                if (route.stops.isNotEmpty) ...[
+                  const SizedBox(height: AppSpacing.xs),
+                  Text('${route.stops.first.name} → ${route.stops.last.name}',
+                      style: AppTextStyles.bodyMd),
+                ],
                 if (route.isDummy)
                   const Text('Data rute sementara (dummy)', style: AppTextStyles.bodySm),
                 const SizedBox(height: AppSpacing.xs),

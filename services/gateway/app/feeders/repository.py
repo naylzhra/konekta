@@ -33,24 +33,26 @@ class FeederRepository:
             )
         return list(corridors.values())
 
-    async def route_stops(self, corridor_id: str) -> Optional[CorridorStops]:
+    async def route_stops(self, corridor_id: str, direction: str = "forward") -> Optional[CorridorStops]:
         corridor = await self._pool.fetchrow("SELECT id, name, is_dummy FROM corridors WHERE id = $1", corridor_id)
         if corridor is None:
             return None
         rows = await self._pool.fetch(
             """SELECT position, name,
                       ST_Y(location::geometry) AS lat, ST_X(location::geometry) AS lng
-               FROM corridor_route_stops WHERE corridor_id = $1 ORDER BY position""",
-            corridor_id,
+               FROM corridor_route_stops WHERE corridor_id = $1 AND direction = $2
+               ORDER BY position""",
+            corridor_id, direction,
         )
         return CorridorStops(
             id=corridor["id"], name=corridor["name"], is_dummy=corridor["is_dummy"],
             items=[RouteStop(**dict(row)) for row in rows],
         )
 
-    async def route_path(self, corridor_id: str) -> Optional[CorridorPath]:
+    async def route_path(self, corridor_id: str, direction: str = "forward") -> Optional[CorridorPath]:
+        column = "return_path" if direction == "backward" else "path"
         row = await self._pool.fetchrow(
-            "SELECT id, ST_AsGeoJSON(path::geometry) AS geometry FROM corridors WHERE id = $1",
+            f"SELECT id, ST_AsGeoJSON({column}::geometry) AS geometry FROM corridors WHERE id = $1",
             corridor_id,
         )
         if row is None:

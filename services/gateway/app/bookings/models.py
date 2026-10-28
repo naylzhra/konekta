@@ -71,6 +71,8 @@ class TripPlan(BaseModel):
     pickup_stop: Optional[Stop] = None
     dropoff_stop: Optional[Stop] = None
     corridor_id: Optional[str] = None
+    # Direction the corridor is travelled in for this trip.
+    direction: Optional[Literal["forward", "backward"]] = None
     # nearest available feeder's ETA to the pickup stop at planning time; not stored
     nearest_feeder_eta_s: Optional[int] = None
     expires_at: datetime

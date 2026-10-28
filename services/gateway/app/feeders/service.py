@@ -24,7 +24,7 @@ from app.websocket.manager import ConnectionManager
 
 logger = logging.getLogger(__name__)
 
-_PUBLISHED_FIELDS = {"feeder_id", "lat", "lng", "heading", "occupancy", "capacity", "corridor_id", "updated_at"}
+_PUBLISHED_FIELDS = {"feeder_id", "lat", "lng", "heading", "occupancy", "capacity", "corridor_id", "direction", "updated_at"}
 
 
 def in_service_area(lat: float, lng: float) -> bool:
@@ -104,7 +104,7 @@ class FeederTrackingService:
             # The device's fixes are being published; the app's report is the
             # fallback and needs no action until the device goes quiet.
             return PositionAccepted(feeder_id=feeder.id, updated_at=self._clock())
-        position = await self._publish(feeder, report.lat, report.lng, report.heading)
+        position = await self._publish(feeder, report.lat, report.lng, report.heading, report.direction)
         return PositionAccepted(feeder_id=feeder.id, updated_at=position.updated_at)
 
     async def report_device_position(
@@ -150,8 +150,13 @@ class FeederTrackingService:
         return self._sources is not None and await self._sources.streak(feeder_id) >= config.IOT_RECOVERY_FIXES
 
     async def _publish(
-        self, feeder: AssignedFeeder, lat: float, lng: float, heading: Optional[float]
+        self, feeder: AssignedFeeder, lat: float, lng: float, heading: Optional[float],
+        direction: Optional[str] = None,
     ) -> FeederPosition:
+        if direction is None:
+            # IoT fixes (and app reports that omit it) keep the driver's choice.
+            last = await self._positions.get_last_known(feeder.id)
+            direction = last.direction if last else None
         # Server time, whichever the source, so updated_at never runs
         # backwards when the source switches.
         position = FeederPosition(
@@ -162,6 +167,7 @@ class FeederTrackingService:
             occupancy=await self._repository.occupancy(feeder.id),
             capacity=feeder.capacity,
             corridor_id=feeder.corridor_id,
+            direction=direction,
             updated_at=self._clock(),
         )
         await self._positions.store(position)

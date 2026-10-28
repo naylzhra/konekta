@@ -57,6 +57,9 @@ class FakePositions:
     async def list_live(self, corridor_id: Optional[str] = None) -> list[FeederPosition]:
         return [p for p in self.stored if corridor_id is None or p.corridor_id == corridor_id]
 
+    async def get_last_known(self, feeder_id: str) -> Optional[FeederPosition]:
+        return next((p for p in reversed(self.stored) if p.feeder_id == feeder_id), None)
+
 
 class RecordingPositionPublisher:
     def __init__(self) -> None:
@@ -175,6 +178,7 @@ async def test_hub_publisher_sends_contract_payload_to_feeder_and_corridor_subsc
                 "occupancy": 1,
                 "capacity": 8,
                 "corridor_id": "K1",
+                "direction": None,
                 "updated_at": "2026-10-15T08:00:00Z",
             },
         }
@@ -233,6 +237,7 @@ async def test_live_feeders_endpoint_lists_on_duty_feeders(feeder_client, positi
         "occupancy": 3,
         "capacity": 8,
         "corridor_id": "K1",
+        "direction": None,
         "updated_at": "2026-10-15T08:00:00Z",
     }
 

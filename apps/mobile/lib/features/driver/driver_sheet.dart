@@ -60,6 +60,9 @@ class DriverSheet extends StatelessWidget {
     required this.onChoose,
     required this.onArrived,
     required this.onDeparted,
+    required this.onStart,
+    required this.onSwitchDirection,
+    this.heading,
   });
 
   final DriverDutyController duty;
@@ -74,6 +77,13 @@ class DriverSheet extends StatelessWidget {
   final ValueChanged<String> onChoose;
   final ValueChanged<NavStop> onArrived;
   final ValueChanged<NavStop> onDeparted;
+
+  /// Asks for the direction, then goes on duty.
+  final VoidCallback onStart;
+  final VoidCallback onSwitchDirection;
+
+  /// "From → To" of the direction being driven.
+  final String? heading;
 
   @override
   Widget build(BuildContext context) {
@@ -123,7 +133,7 @@ class DriverSheet extends StatelessWidget {
       ..._issue(),
       const SizedBox(height: AppSpacing.md),
       ElevatedButton.icon(
-        onPressed: duty.status == DutyStatus.offDuty ? duty.startDuty : null,
+        onPressed: duty.status == DutyStatus.offDuty ? onStart : null,
         icon: const Icon(Icons.navigation),
         label: const Text(LiveTrackingStrings.startDuty),
       ),
@@ -135,7 +145,8 @@ class DriverSheet extends StatelessWidget {
       if (corridorId != null)
         TextButton.icon(
           onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(
-              builder: (_) => RouteStopsPage(corridorId: corridorId!))),
+              builder: (_) => RouteStopsPage(
+                  corridorId: corridorId!, direction: duty.direction))),
           icon: const Icon(Icons.format_list_numbered),
           label: const Text(DriverStrings.routeOrder),
         ),
@@ -152,6 +163,22 @@ class DriverSheet extends StatelessWidget {
         if (!listed.contains(t.stopId)) t,
     ];
     return [
+      if (heading != null)
+        Row(children: [
+          const Icon(Icons.alt_route, size: 18, color: AppColors.onSurface),
+          const SizedBox(width: AppSpacing.base),
+          Expanded(
+            child: Text(heading!,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: AppTextStyles.bodySm),
+          ),
+          TextButton.icon(
+            onPressed: onSwitchDirection,
+            icon: const Icon(Icons.swap_vert, size: 18),
+            label: const Text(DriverStrings.switchDirection),
+          ),
+        ]),
       if (target != null) ...[
         NavEtaRow(durationS: nav!.durationS, distanceM: nav.distanceM),
         const SizedBox(height: AppSpacing.xs),
