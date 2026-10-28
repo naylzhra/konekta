@@ -35,6 +35,10 @@ class FakeRepository:
         # route_progress: stops (position, name, along_m) and along_m by feeder latitude
         self.route_stops: Optional[list[tuple[int, str, Optional[float]]]] = None
         self.along_by_lat: dict[float, float] = {}
+        self.members: dict[str, list[str]] = {}
+
+    async def route_members(self, corridor_id: str) -> list[str]:
+        return self.members.get(corridor_id, [corridor_id])
 
     async def route_progress(self, corridor_id, direction, points):
         if self.route_stops is None:
@@ -455,3 +459,14 @@ async def test_arrivals_endpoint_lists_soonest_feeders_per_stop(feeder_client, p
 async def test_arrivals_endpoint_unknown_corridor_is_404(feeder_client):
     response = await feeder_client.get("/corridors/NOPE/arrivals", headers=auth("t-passenger"))
     assert response.status_code == 404
+
+
+async def test_arrivals_include_feeders_of_corridors_sharing_the_route_code(feeder_client, positions, tracking):
+    # K2 is FD-1's old return corridor: its feeders drive K1's road.
+    tracking._repository.route_stops = [(1, "Halte A", 0.0), (2, "Halte B", 1000.0)]
+    tracking._repository.along_by_lat = {-6.91: 900.0, -6.92: 800.0}
+    tracking._repository.members = {"K1": ["K1", "K2"]}
+    positions.stored += [_live("K1-01", -6.91), _live("K2-01", -6.92).model_copy(update={"corridor_id": "K2"})]
+
+    response = await feeder_client.get("/corridors/K1/arrivals", headers=auth("t-passenger"))
+    assert [a["feeder_id"] for a in response.json()["items"][1]["arrivals"]] == ["K1-01", "K2-01"]

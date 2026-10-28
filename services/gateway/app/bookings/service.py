@@ -213,6 +213,7 @@ class BookingService:
             pickup_stop=pickup,
             dropoff_stop=dropoff,
             corridor_id=pickup.corridor_id,
+            route_code=match.route_code,
             direction=match.direction,
             nearest_feeder_eta_s=nearest_feeder_eta_s,
             expires_at=self._clock() + timedelta(seconds=config.PLAN_TTL_S),

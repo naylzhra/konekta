@@ -41,6 +41,8 @@ class RouteMatch(BaseModel):
     """The corridor serving a trip and the direction it is travelled in."""
     corridor_id: str
     direction: Direction = "forward"
+    # Passenger-facing route code (migration 015), when set.
+    route_code: Optional[str] = None
 
 
 class StopAssigner(Protocol):
@@ -147,7 +149,7 @@ class DbStopAssigner:
         """The closest corridor line, in either direction, along which the
         destination lies at least 300 m after the origin."""
         row = await self._pool.fetchrow(
-            """SELECT c.id, d.direction FROM corridors c
+            """SELECT c.id, d.direction, c.route_code FROM corridors c
                CROSS JOIN LATERAL (VALUES ('forward', c.path), ('backward', c.return_path))
                     AS d(direction, line)
                WHERE d.line IS NOT NULL AND NOT c.is_dummy
@@ -166,7 +168,9 @@ class DbStopAssigner:
                LIMIT 1""",
             origin.lng, origin.lat, destination.lng, destination.lat,
         )
-        return RouteMatch(corridor_id=row["id"], direction=row["direction"]) if row else None
+        if row is None:
+            return None
+        return RouteMatch(corridor_id=row["id"], direction=row["direction"], route_code=row["route_code"])
 
     async def progress_m(self, corridor_id, direction, points) -> list[Optional[float]]:
         if not points:

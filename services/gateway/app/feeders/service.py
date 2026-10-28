@@ -166,7 +166,9 @@ class FeederTrackingService:
         """Per route stop, the on-duty feeders travelling [direction] that
         reach it within [max_eta_s]. None if the corridor doesn't exist."""
         feeders = [
-            feeder for feeder in await self._positions.list_live(corridor_id)
+            feeder
+            for member in await self._repository.route_members(corridor_id)
+            for feeder in await self._positions.list_live(member)
             # Drivers on older app versions report no direction: forward.
             if (feeder.direction or "forward") == direction
         ]

@@ -111,6 +111,30 @@ void main() {
     expect(fleet.feeders.length, 2);
   });
 
+  test('corridors sharing a route code are one route', () async {
+    final grouped = FeederFleetController(
+      loadCorridors: () async => const [
+        CorridorOption(id: 'K1', name: 'Kiaracondong - Pasar Baru', routeCode: 'FD-1', feeders: []),
+        CorridorOption(id: 'K2', name: 'Pasar Baru - Kiaracondong', routeCode: 'FD-1', isDummy: true, feeders: []),
+        CorridorOption(id: 'K3', name: 'Cibiru', feeders: []),
+      ],
+      loadLive: () async => [_position('K1-01', 'K1'), _position('K2-01', 'K2')],
+      positions: positions,
+      clock: () => now,
+    );
+    await grouped.start();
+
+    final [fd1, k3] = grouped.routes;
+    expect((fd1.id, fd1.name, fd1.primary.id), ('FD-1', 'Kiaracondong - Pasar Baru', 'K1'));
+    expect(fd1.corridorIds, {'K1', 'K2'});
+    expect(fd1.isDummy, isFalse);
+    expect(k3.id, 'K3');
+    expect(grouped.onDutyOnRoute(fd1), 2);
+    expect(grouped.searchRoutes('fd-1').single.id, 'FD-1');
+    expect(grouped.searchRoutes('k2').single.id, 'FD-1');
+    grouped.dispose();
+  });
+
   test('watches several routes at once', () async {
     await fleet.start();
     positions.corridors['K2']!.add(_position('K2-01', 'K2'));

@@ -4,9 +4,9 @@ import 'package:konekta_mobile/core/strings/live_tracking_strings.dart';
 import 'package:konekta_mobile/features/live_tracking/domain/feeder_models.dart';
 import 'package:konekta_mobile/features/live_tracking/ui/route_detail_page.dart';
 
-const _corridor = CorridorOption(id: 'K1', name: 'Koridor 1', feeders: []);
+const _route = TransitRoute(id: 'K1', corridors: [CorridorOption(id: 'K1', name: 'Koridor 1', feeders: [])]);
 
-CorridorRoute _route(RouteDirection direction, {String? hours, int? fare}) => CorridorRoute(
+CorridorRoute _stops(RouteDirection direction, {String? hours, int? fare}) => CorridorRoute(
       id: 'K1',
       name: 'Koridor 1',
       operatingHours: hours,
@@ -34,8 +34,8 @@ Future<void> _pump(
   addTearDown(tester.view.reset);
   await tester.pumpWidget(MaterialApp(
     home: RouteDetailPage(
-      corridor: _corridor,
-      loadStops: (direction) async => _route(direction, hours: hours, fare: fare),
+      route: _route,
+      loadStops: (direction) async => _stops(direction, hours: hours, fare: fare),
       loadArrivals: arrivals ?? (_) async => const [],
       feederNumber: (id) => id == 'K1-01' ? 1 : null,
     ),
@@ -92,8 +92,8 @@ void main() {
           onPressed: () async {
             result = await Navigator.of(context).push<bool>(MaterialPageRoute(
               builder: (_) => RouteDetailPage(
-                corridor: _corridor,
-                loadStops: (direction) async => _route(direction),
+                route: _route,
+                loadStops: (direction) async => _stops(direction),
                 loadArrivals: (_) async => const [],
               ),
             ));

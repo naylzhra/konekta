@@ -1116,7 +1116,7 @@ class _LegSummary extends StatelessWidget {
               switch (leg.mode) {
                 LegMode.motorcycle => 'Motor',
                 LegMode.car => 'Mobil',
-                _ => BookingStrings.feederLine(plan.corridorId),
+                _ => BookingStrings.feederLine(plan.lineLabel),
               },
               style: AppTextStyles.labelMd.copyWith(color: AppColors.onPrimary, letterSpacing: 0),
             ),
@@ -1206,7 +1206,7 @@ class _RouteTimeline extends StatelessWidget {
                   step: steps[i],
                   above: railAt(i - 1),
                   below: railAt(i + 1),
-                  corridorId: plan.corridorId,
+                  corridorId: plan.lineLabel,
                   nearestFeederEtaS: plan.nearestFeederEtaS,
                 ),
       ],

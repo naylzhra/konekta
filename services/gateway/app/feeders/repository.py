@@ -14,7 +14,7 @@ class FeederRepository:
     async def list_corridors(self) -> list[CorridorWithFeeders]:
         rows = await self._pool.fetch(
             """
-            SELECT c.id AS corridor_id, c.name AS corridor_name, c.is_dummy,
+            SELECT c.id AS corridor_id, c.name AS corridor_name, c.is_dummy, c.route_code,
                    f.id, f.number, f.capacity, f.driver_id IS NULL AS available
             FROM corridors c
             JOIN feeders f ON f.corridor_id = c.id
@@ -26,7 +26,7 @@ class FeederRepository:
             corridor = corridors.setdefault(
                 row["corridor_id"],
                 CorridorWithFeeders(id=row["corridor_id"], name=row["corridor_name"],
-                                    is_dummy=row["is_dummy"], feeders=[]),
+                                    is_dummy=row["is_dummy"], route_code=row["route_code"], feeders=[]),
             )
             corridor.feeders.append(
                 FeederOption(id=row["id"], number=row["number"], capacity=row["capacity"], available=row["available"])
@@ -49,6 +49,18 @@ class FeederRepository:
             corridor_id, direction,
         )
         return CorridorStops(**dict(corridor), items=[RouteStop(**dict(row)) for row in rows])
+
+    async def route_members(self, corridor_id: str) -> list[str]:
+        """[corridor_id] plus the corridors sharing its route code: the same
+        road to passengers, so their feeders count toward its arrivals."""
+        rows = await self._pool.fetch(
+            """SELECT c.id FROM corridors c, corridors me
+               WHERE me.id = $1
+                 AND (c.id = me.id OR (me.route_code IS NOT NULL AND c.route_code = me.route_code))
+               ORDER BY c.id = me.id DESC, c.id""",
+            corridor_id,
+        )
+        return [row["id"] for row in rows]
 
     async def route_progress(
         self, corridor_id: str, direction: str, points: list[tuple[float, float]]

@@ -44,12 +44,13 @@ class FeederOption {
 
 class CorridorOption {
   const CorridorOption(
-      {required this.id, required this.name, required this.feeders, this.isDummy = false});
+      {required this.id, required this.name, required this.feeders, this.isDummy = false, this.routeCode});
 
   factory CorridorOption.fromJson(Map<String, dynamic> json) => CorridorOption(
         id: json['id'] as String,
         name: json['name'] as String,
         isDummy: json['is_dummy'] as bool? ?? false,
+        routeCode: json['route_code'] as String?,
         feeders: [
           for (final feeder in json['feeders'] as List<dynamic>)
             FeederOption.fromJson(feeder as Map<String, dynamic>),
@@ -61,8 +62,28 @@ class CorridorOption {
   final bool isDummy;
   final List<FeederOption> feeders;
 
+  /// Corridors sharing a code are one route to passengers (e.g. FD-1).
+  final String? routeCode;
+
   List<FeederOption> get availableFeeders =>
       feeders.where((f) => f.available).toList();
+}
+
+/// A route as passengers see it: the corridors sharing a route code (or a
+/// lone corridor without one), listed once under that code.
+class TransitRoute {
+  const TransitRoute({required this.id, required this.corridors});
+
+  /// The route code, else the lone corridor's id.
+  final String id;
+  final List<CorridorOption> corridors;
+
+  /// The corridor whose line and stops stand for the route: the first one
+  /// with real geometry.
+  CorridorOption get primary => corridors.firstWhere((c) => !c.isDummy, orElse: () => corridors.first);
+  String get name => primary.name;
+  bool get isDummy => corridors.every((c) => c.isDummy);
+  Set<String> get corridorIds => {for (final corridor in corridors) corridor.id};
 }
 
 class CorridorRouteStop {

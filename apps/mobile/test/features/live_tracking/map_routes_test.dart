@@ -100,6 +100,49 @@ void main() {
     await tearDownTab(tester);
   });
 
+  testWidgets('corridors sharing a route code are listed and watched as one route', (tester) async {
+    tester.view.physicalSize = const Size(1080, 2400);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    trip = ValueNotifier<ActiveTrip?>(null);
+    final positions = _NoPositions();
+    map = PassengerMapController(trip: trip, positions: positions, location: _NoLocation());
+    fleet = FeederFleetController(
+      loadCorridors: () async => const [
+        CorridorOption(id: 'K1', name: 'Kiaracondong - Pasar Baru', routeCode: 'FD-1', feeders: []),
+        CorridorOption(id: 'K2', name: 'Pasar Baru - Kiaracondong', routeCode: 'FD-1', isDummy: true, feeders: []),
+      ],
+      loadLive: () async => [],
+      positions: positions,
+    );
+    await map.start();
+    await fleet.start();
+    final stopsLoadedFor = <String>{};
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: MapTab(
+      controller: map,
+      fleet: fleet,
+      loadRoutePath: (_) async => const [LatLng(-6.94, 107.64), LatLng(-6.92, 107.62)],
+      loadRouteStops: (corridorId, direction) {
+        stopsLoadedFor.add(corridorId);
+        return _noStops(corridorId, direction);
+      },
+      loadArrivals: _noArrivals,
+    ))));
+    await tester.pump();
+
+    expect(find.text('Kiaracondong - Pasar Baru'), findsOneWidget);
+    expect(find.text('Pasar Baru - Kiaracondong'), findsNothing);
+    expect(find.text('FD-1'), findsOneWidget);
+
+    await tester.tap(find.text('Kiaracondong - Pasar Baru'));
+    await tester.pumpAndSettle();
+    expect(stopsLoadedFor, {'K1'}); // the corridor with geometry stands for the route
+    await tester.tap(find.text(LiveTrackingStrings.follow));
+    await tester.pumpAndSettle();
+    expect(fleet.corridorFilters, {'K1', 'K2'});
+    await tearDownTab(tester);
+  });
+
   testWidgets('Pantau beberapa: tick routes, then watch them', (tester) async {
     await pumpTwoRoutes(tester);
     await tester.tap(find.byType(Switch));

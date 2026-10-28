@@ -135,6 +135,7 @@ class TripPlan {
     this.pickupStop,
     this.dropoffStop,
     this.corridorId,
+    this.routeCode,
     this.nearestFeederEtaS,
   });
 
@@ -150,6 +151,7 @@ class TripPlan {
         pickupStop: _parseOptional(json['pickup_stop'], Stop.fromJson),
         dropoffStop: _parseOptional(json['dropoff_stop'], Stop.fromJson),
         corridorId: json['corridor_id'] as String?,
+        routeCode: json['route_code'] as String?,
         nearestFeederEtaS: json['nearest_feeder_eta_s'] as int?,
         expiresAt: DateTime.parse(json['expires_at'] as String),
       );
@@ -163,8 +165,14 @@ class TripPlan {
   final Stop? pickupStop;
   final Stop? dropoffStop;
   final String? corridorId;
+
+  /// Passenger-facing route code (e.g. FD-1), when the corridor has one.
+  final String? routeCode;
   final int? nearestFeederEtaS;
   final DateTime expiresAt;
+
+  /// What to call the line: the route code, else the corridor id.
+  String? get lineLabel => routeCode ?? corridorId;
 
   bool isExpired(DateTime now) => !now.isBefore(expiresAt);
 }

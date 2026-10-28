@@ -75,6 +75,8 @@ class _MapTabState extends State<MapTab> {
 
   /// "Pantau beberapa" mode: the list shows checkboxes and a watch button.
   bool _multi = false;
+
+  /// Route ids ticked in that mode.
   Set<String> _picked = {};
   final _routeQuery = TextEditingController();
 
@@ -213,17 +215,29 @@ class _MapTabState extends State<MapTab> {
     _fit(points.isNotEmpty ? points : _routePaths.values.expand((route) => route).toList());
   }
 
-  Future<void> _openRoute(CorridorOption corridor) async {
+  /// Corridors of the routes with these ids.
+  Set<String> _corridorsOf(Iterable<String> routeIds) => {
+        for (final route in _fleet.routes)
+          if (routeIds.contains(route.id)) ...route.corridorIds,
+      };
+
+  /// Ids of the routes the map is narrowed to.
+  Set<String> _watchedRoutes() => {
+        for (final route in _fleet.routes)
+          if (route.corridorIds.any(_fleet.corridorFilters.contains)) route.id,
+      };
+
+  Future<void> _openRoute(TransitRoute route) async {
     final follow = await Navigator.of(context).push<bool>(MaterialPageRoute(
       builder: (_) => RouteDetailPage(
-        corridor: corridor,
-        loadStops: (direction) => widget.loadRouteStops(corridor.id, direction),
-        loadArrivals: (direction) => widget.loadArrivals(corridor.id, direction),
+        route: route,
+        loadStops: (direction) => widget.loadRouteStops(route.primary.id, direction),
+        loadArrivals: (direction) => widget.loadArrivals(route.primary.id, direction),
         feederNumber: (feederId) => _fleet.feederOption(feederId)?.number,
-        following: setEquals(_fleet.corridorFilters, {corridor.id}),
+        following: setEquals(_fleet.corridorFilters, route.corridorIds),
       ),
     ));
-    if (follow == true && mounted) _watchRoutes({corridor.id});
+    if (follow == true && mounted) _watchRoutes(route.corridorIds);
   }
 
   void _loadAvailableRoutes() {
@@ -443,7 +457,7 @@ class _MapTabState extends State<MapTab> {
   /// page, or tick several in "Pantau beberapa" mode and watch them.
   Widget _routeSheet(ScrollController scroll, FeederPosition? selected) {
     final routes = _fleet.searchRoutes(_routeQuery.text);
-    final watched = _fleet.corridorFilters;
+    final watched = _watchedRoutes();
     final Widget? status = selected != null
         ? _FleetFeederCard(feeder: selected, fleet: _fleet)
         : _journey != null
@@ -529,8 +543,10 @@ class _MapTabState extends State<MapTab> {
                     children: [
                       Expanded(
                         child: Text(
-                          LiveTrackingStrings.watchingRoutes(
-                              [for (final id in watched) _fleet.corridor(id)?.name ?? id]),
+                          LiveTrackingStrings.watchingRoutes([
+                            for (final route in _fleet.routes)
+                              if (watched.contains(route.id)) route.name,
+                          ]),
                           style: AppTextStyles.bodySm.copyWith(color: AppColors.primary),
                         ),
                       ),
@@ -552,18 +568,18 @@ class _MapTabState extends State<MapTab> {
                     padding: EdgeInsets.symmetric(vertical: AppSpacing.sm),
                     child: Text(LiveTrackingStrings.noRouteFound, style: AppTextStyles.bodySm),
                   ),
-                for (final corridor in routes)
+                for (final route in routes)
                   _RouteTile(
-                    corridor: corridor,
-                    onDuty: _fleet.onDutyOn(corridor.id),
+                    route: route,
+                    onDuty: _fleet.onDutyOnRoute(route),
                     multi: _multi,
-                    picked: _picked.contains(corridor.id),
-                    watched: watched.contains(corridor.id),
+                    picked: _picked.contains(route.id),
+                    watched: watched.contains(route.id),
                     onTap: _multi
                         ? () => setState(() {
-                              if (!_picked.remove(corridor.id)) _picked.add(corridor.id);
+                              if (!_picked.remove(route.id)) _picked.add(route.id);
                             })
-                        : () => _openRoute(corridor),
+                        : () => _openRoute(route),
                   ),
               ],
             ),
@@ -579,7 +595,7 @@ class _MapTabState extends State<MapTab> {
               child: SizedBox(
                 width: double.infinity,
                 child: FilledButton(
-                  onPressed: _picked.isEmpty ? null : () => _watchRoutes({..._picked}),
+                  onPressed: _picked.isEmpty ? null : () => _watchRoutes(_corridorsOf(_picked)),
                   child: Text(LiveTrackingStrings.watchRoutes(_picked.length)),
                 ),
               ),
@@ -659,7 +675,7 @@ List<Marker> passengerMapMarkers(
 /// "Pantau beberapa" mode, else a chevron to its detail page.
 class _RouteTile extends StatelessWidget {
   const _RouteTile({
-    required this.corridor,
+    required this.route,
     required this.onDuty,
     required this.multi,
     required this.picked,
@@ -667,7 +683,7 @@ class _RouteTile extends StatelessWidget {
     required this.onTap,
   });
 
-  final CorridorOption corridor;
+  final TransitRoute route;
   final int onDuty;
   final bool multi;
   final bool picked;
@@ -683,14 +699,14 @@ class _RouteTile extends StatelessWidget {
         padding: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
         child: Row(
           children: [
-            RouteBadge(id: corridor.id, size: 36),
+            RouteBadge(id: route.id, size: 36),
             const SizedBox(width: AppSpacing.sm),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    corridor.isDummy ? '${corridor.name} (dummy)' : corridor.name,
+                    route.isDummy ? '${route.name} (dummy)' : route.name,
                     style: AppTextStyles.bodyMd.copyWith(fontWeight: FontWeight.w600, color: AppColors.inverseSurface),
                   ),
                   Text(LiveTrackingStrings.routeFeeders(onDuty), style: AppTextStyles.bodySm),

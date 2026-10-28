@@ -36,6 +36,8 @@ class CorridorWithFeeders(BaseModel):
     id: str
     name: str
     is_dummy: bool = False
+    # Corridors sharing a code are one route to passengers (migration 015).
+    route_code: Optional[str] = None
     feeders: list[FeederOption]
 
 

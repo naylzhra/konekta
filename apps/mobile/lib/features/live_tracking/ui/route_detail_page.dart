@@ -13,7 +13,7 @@ import '../domain/feeder_models.dart';
 class RouteDetailPage extends StatefulWidget {
   const RouteDetailPage({
     super.key,
-    required this.corridor,
+    required this.route,
     required this.loadStops,
     required this.loadArrivals,
     this.feederNumber,
@@ -21,7 +21,9 @@ class RouteDetailPage extends StatefulWidget {
     this.refreshEvery = const Duration(seconds: 20),
   });
 
-  final CorridorOption corridor;
+  final TransitRoute route;
+
+  /// Stops of [TransitRoute.primary], which carries both directions.
   final Future<CorridorRoute> Function(RouteDirection direction) loadStops;
   final Future<List<StopArrivals>> Function(RouteDirection direction) loadArrivals;
 
@@ -139,7 +141,7 @@ class _RouteDetailPageState extends State<RouteDetailPage> {
         padding: EdgeInsets.only(bottom: AppSpacing.lg + MediaQuery.paddingOf(context).bottom),
         children: [
           _Header(
-            corridor: widget.corridor,
+            route: widget.route,
             name: route.name,
             following: widget.following,
             onFollow: () => Navigator.of(context).pop(true),
@@ -169,9 +171,9 @@ class _RouteDetailPageState extends State<RouteDetailPage> {
 }
 
 class _Header extends StatelessWidget {
-  const _Header({required this.corridor, required this.name, required this.following, required this.onFollow});
+  const _Header({required this.route, required this.name, required this.following, required this.onFollow});
 
-  final CorridorOption corridor;
+  final TransitRoute route;
   final String name;
   final bool following;
   final VoidCallback onFollow;
@@ -190,9 +192,9 @@ class _Header extends StatelessWidget {
         children: [
           Row(
             children: [
-              RouteBadge(id: corridor.id),
+              RouteBadge(id: route.id),
               const SizedBox(width: AppSpacing.xs),
-              if (corridor.isDummy)
+              if (route.isDummy)
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: AppSpacing.xs, vertical: 2),
                   decoration: BoxDecoration(
